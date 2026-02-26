@@ -7,10 +7,11 @@ const SubAdmin = () => {
     const [sidebarOpen, setSidebarOpen] = useState(true);
     const [currentView, setCurrentView] = useState('dashboard');
     const [reportsData, setReportsData] = useState([]);
+    const [activities, setActivities] = useState([]);
     const [usersList, setUsersList] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState(null);
-    const [currentUser, setCurrentUser] = useState({ name: 'Mentor', domain: 'Domain Mentor' });
+    const [currentUser, setCurrentUser] = useState({ name: 'Mentor', domain: '', designation: 'Mentor' });
     const [domainStats, setDomainStats] = useState({ newUsers: '--', activity: '--' });
     const [tasks, setTasks] = useState([]);
     const [taskMenuOpen, setTaskMenuOpen] = useState(false);
@@ -125,20 +126,21 @@ const SubAdmin = () => {
 
     const fetchDashboardData = async () => {
         try {
-            const [uRes, rRes] = await Promise.all([
+            const [uRes, rRes, lRes] = await Promise.all([
                 fetch(`${API_BASE_URL}/api/users`),
-                fetch(`${API_BASE_URL}/api/daily-reports`)
+                fetch(`${API_BASE_URL}/api/daily-reports`),
+                fetch(`${API_BASE_URL}/api/logs`)
             ]);
+
+            const storedUser = JSON.parse(localStorage.getItem('currentUser'));
+            const mentorDomain = storedUser?.domain || currentUser.domain;
 
             if (uRes.ok) {
                 const allUsers = await uRes.json();
                 setUsersList(allUsers);
 
-                const storedUser = JSON.parse(localStorage.getItem('currentUser'));
-                const mentorDomain = storedUser?.domain || currentUser.domain;
-
                 if (mentorDomain && mentorDomain !== 'Domain Mentor') {
-                    const domainUsers = allUsers.filter(u => u.department === mentorDomain);
+                    const domainUsers = allUsers.filter(u => u.domain === mentorDomain);
                     const activeDomainUsers = domainUsers.filter(u => u.status === 'Active').length;
                     const activityPercentage = domainUsers.length > 0 ? Math.round((activeDomainUsers / domainUsers.length) * 100) : 0;
 
@@ -148,7 +150,15 @@ const SubAdmin = () => {
                     });
                 }
             }
+
             if (rRes.ok) setReportsData(await rRes.json());
+
+            if (lRes.ok) {
+                const allLogs = await lRes.json();
+                // Filter logs to show only those in the mentor's domain
+                const domainLogs = allLogs.filter(log => log.domain === mentorDomain);
+                setActivities(domainLogs);
+            }
         } catch (err) {
             console.warn("Dashboard polling error:", err);
         }
@@ -227,7 +237,12 @@ const SubAdmin = () => {
         const storedUser = localStorage.getItem('currentUser');
         if (storedUser) {
             const parsedUser = JSON.parse(storedUser);
-            setCurrentUser(prev => ({ ...prev, name: parsedUser.username, domain: parsedUser.domain || prev.domain }));
+            setCurrentUser(prev => ({
+                ...prev,
+                name: parsedUser.username,
+                domain: parsedUser.domain || prev.domain,
+                designation: parsedUser.designation || prev.designation
+            }));
         }
     }, []);
 
@@ -235,9 +250,13 @@ const SubAdmin = () => {
         const storedUser = localStorage.getItem('currentUser');
         if (storedUser && usersList.length > 0) {
             const parsedUser = JSON.parse(storedUser);
-            const foundUser = usersList.find(u => u.username === parsedUser.username);
-            if (foundUser && foundUser.department) {
-                setCurrentUser(prev => ({ ...prev, domain: foundUser.department }));
+            const foundUser = usersList.find(u => u.username?.trim() === parsedUser.username?.trim());
+            if (foundUser) {
+                setCurrentUser(prev => ({
+                    ...prev,
+                    domain: foundUser.domain || prev.domain,
+                    designation: foundUser.designation || prev.designation
+                }));
             }
         }
     }, [usersList]);
@@ -301,7 +320,7 @@ const SubAdmin = () => {
                         </div>
                         <div>
                             <p className="text-sm font-bold text-slate-700">Hello, {currentUser.name}!</p>
-                            <p className="text-xs text-slate-500">{currentUser.domain}</p>
+                            <p className="text-xs text-slate-500">{currentUser.designation}</p>
                         </div>
                     </div>
                 </div>
@@ -345,7 +364,7 @@ const SubAdmin = () => {
                             <img src="https://api.dicebear.com/7.x/avataaars/svg?seed=Robert" alt="User" />
                         </div>
                         <div className="flex-1 min-w-0">
-                            <p className="text-sm font-semibold text-slate-700 truncate">{currentUser.domain} <br></br>{currentUser.name}</p>
+                            <p className="text-sm font-semibold text-slate-700 truncate">{currentUser.name} <br></br>{currentUser.domain}</p>
                         </div>
                     </div>
 
@@ -409,9 +428,9 @@ const SubAdmin = () => {
                             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
                                 <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
                                     <span>Hello, <span className="text-amber-600">{currentUser.name}</span>!</span>
-                                    {currentUser.domain && (
+                                    {currentUser.designation && (
                                         <span className="px-3 py-1 bg-amber-50 text-amber-600 text-xs rounded-full border border-amber-100 uppercase tracking-wider shadow-sm">
-                                            {currentUser.domain}
+                                            {currentUser.designation}
                                         </span>
                                     )}
                                 </h1>
@@ -443,14 +462,14 @@ const SubAdmin = () => {
                                                     <UsersIcon size={28} />
                                                 </div>
                                                 <div>
-                                                    <h3 className="text-2xl font-bold">Total Users</h3>
-                                                    <p className="text-blue-100 opacity-90 text-sm">Total Mentors</p>
+                                                    <h3 className="text-2xl font-bold">Users List</h3>
+                                                    <p className="text-blue-100 opacity-90 text-sm">Members in System</p>
                                                     <h3 className="text-2xl font-bold">Domain Users</h3>
-                                                    <p className="text-blue-100 opacity-90 text-sm">Users in your domain</p>
+                                                    <p className="text-blue-100 opacity-90 text-sm">Users in {currentUser.domain}</p>
                                                 </div>
                                             </div>
                                             <div className="text-4xl font-bold opacity-20">{usersList.length || '#'}</div>
-                                            <div className="text-4xl font-bold opacity-20">{usersList.filter(u => u.department === currentUser.domain).length || '#'}</div>
+                                            <div className="text-4xl font-bold opacity-20">{usersList.filter(u => u.domain === currentUser.domain).length || '#'}</div>
                                         </div>
                                     </div>
 
@@ -493,14 +512,14 @@ const SubAdmin = () => {
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-slate-100">
-                                            {usersList.filter(u => u.department === currentUser.domain).length === 0 ? (
+                                            {usersList.filter(u => u.domain === currentUser.domain).length === 0 ? (
                                                 <tr>
                                                     <td colSpan="4" className="px-6 py-8 text-center text-slate-400">
                                                         No users found in your domain ({currentUser.domain}).
                                                     </td>
                                                 </tr>
                                             ) : (
-                                                usersList.filter(u => u.department === currentUser.domain).slice(0, 5).map((user) => (
+                                                usersList.filter(u => u.domain === currentUser.domain).slice(0, 5).map((user) => (
                                                     <UserRow
                                                         key={user.id}
                                                         name={user.username}
@@ -531,19 +550,19 @@ const SubAdmin = () => {
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-slate-100">
-                                            {(reportsData.length > 0 ? reportsData : []).slice(0, 5).map((report) => (
+                                            {(activities.length > 0 ? activities : []).slice(0, 5).map((log) => (
                                                 <ActivityRow
-                                                    key={report.id}
-                                                    date={report.date}
-                                                    time={report.day || "Submission"}
-                                                    activity={`Report: ${report.title || report.projectName}`}
-                                                    status={report.status === 'Completed' ? 'done' : 'pending'}
+                                                    key={log.id}
+                                                    date={log.login_time ? log.login_time.split('T')[0] : 'N/A'}
+                                                    time={log.login_time ? log.login_time.split('T')[1]?.split('.')[0] : 'N/A'}
+                                                    activity={`${log.username}: ${log.action}`}
+                                                    status={log.action.toLowerCase().includes('logged in') ? 'done' : 'pending'}
                                                 />
                                             ))}
-                                            {reportsData.length === 0 && (
+                                            {activities.length === 0 && (
                                                 <tr>
                                                     <td colSpan="3" className="px-6 py-8 text-center text-slate-400">
-                                                        No recent activities found.
+                                                        No recent activities found in your domain ({currentUser.domain}).
                                                     </td>
                                                 </tr>
                                             )}
@@ -582,14 +601,14 @@ const SubAdmin = () => {
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-100">
-                                        {usersList.length === 0 ? (
+                                        {usersList.filter(u => u.domain === currentUser.domain).length === 0 ? (
                                             <tr>
-                                                <td colSpan="4" className="p-12 text-center text-slate-400">
-                                                    No users found.
+                                                <td colSpan="5" className="p-12 text-center text-slate-400">
+                                                    No users found in your domain ({currentUser.domain}).
                                                 </td>
                                             </tr>
                                         ) : (
-                                            usersList.map((user) => (
+                                            usersList.filter(u => u.domain === currentUser.domain).map((user) => (
                                                 <tr key={user.id} className="hover:bg-slate-50 transition-colors">
                                                     <td className="px-6 py-4 font-mono text-xs text-slate-500">{user.custom_id || user.id}</td>
                                                     <td className="px-6 py-4">
@@ -604,7 +623,7 @@ const SubAdmin = () => {
                                                         </div>
                                                     </td>
                                                     <td className="px-6 py-4 text-slate-600 font-medium">{user.designation}</td>
-                                                    <td className="px-6 py-4 text-slate-500 font-medium">{user.department}</td>
+                                                    <td className="px-6 py-4 text-slate-500 font-medium">{user.domain}</td>
                                                     <td className="px-6 py-4 text-center">
                                                         <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${user.status === 'Active' ? 'bg-green-100 text-green-800' : 'bg-slate-100 text-slate-800'}`}>
                                                             {user.status}
@@ -671,7 +690,7 @@ const SubAdmin = () => {
 
                                                 if (selectedUser) {
                                                     name = selectedUser.username;
-                                                    domain = selectedUser.department || '';
+                                                    domain = selectedUser.domain || '';
                                                 }
 
                                                 setNewTask({
@@ -703,7 +722,7 @@ const SubAdmin = () => {
 
                                                 if (selectedUser) {
                                                     newUserId = selectedUser.id;
-                                                    newDomain = selectedUser.department || '';
+                                                    newDomain = selectedUser.domain || '';
                                                 }
 
                                                 setNewTask({

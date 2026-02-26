@@ -948,10 +948,15 @@ const CreateAdminForm = ({ onViewList, initialData }) => {
 
   const handleChange = (e) => {
     const { name, value } = e.target;
-    setFormData((prev) => ({
-      ...prev,
-      [name]: value,
-    }));
+    setFormData((prev) => {
+      const updated = { ...prev, [name]: value };
+      if (name === "designation" && value === "Mentor") {
+        updated.role = "mentor";
+      } else if (name === "designation" && value !== "Mentor") {
+        updated.role = "admin";
+      }
+      return updated;
+    });
   };
 
   const handleSubmit = async (e) => {
@@ -1066,8 +1071,8 @@ const CreateAdminForm = ({ onViewList, initialData }) => {
                 value={formData.designation}
                 onChange={handleChange}
                 className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-slate-50"
-              > 
-                <option value="Select Designation">Select Designation</option> 
+              >
+                <option value="Select Designation">Select Designation</option>
                 <option value="Intern Head">Intern Head</option>
                 <option value="Mentor">Mentor</option>
               </select>
@@ -1158,7 +1163,7 @@ const CreateUserForm = ({ onViewList, initialData }) => {
         role: "User",
         Domain: "",
         designation: "",
- 
+
       });
     }
   }, [initialData]);
@@ -1168,7 +1173,11 @@ const CreateUserForm = ({ onViewList, initialData }) => {
     setFormData((prev) => {
       const updated = { ...prev, [name]: value };
       if (name === "designation") {
-        updated.role = value === "Mentor" ? "Mentor" : "admin";
+        if (value === "Mentor") {
+          updated.role = "mentor";
+        } else {
+          updated.role = "User";
+        }
       }
       return updated;
     });
@@ -1278,7 +1287,7 @@ const CreateUserForm = ({ onViewList, initialData }) => {
               </label>
               <select
                 name="designation"
-                value={formData.designation }
+                value={formData.designation}
                 onChange={handleChange}
                 className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-slate-50"
               >
@@ -1623,16 +1632,15 @@ const AdminRow = ({ userId, name, role, designation, domain, status, email, onEd
     </td>
     <td className="px-6 py-4 w-full">
       <div className="flex items-center gap-5">
-        <p className="font-bold text-slate-800 text-sm min-w-40">{name}</p> 
+        <p className="font-bold text-slate-800 text-sm min-w-40">{name}</p>
       </div>
     </td>
     <td className="px-6 py-4 text-slate-500 text-xs">{email}</td>
     <td className="px-6 py-4">
-      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide ${
-        (role || '').toLowerCase().includes('super') ? 'bg-indigo-100 text-indigo-700 border border-indigo-200' : 
-        (role || '').toLowerCase().includes('admin') ? 'bg-blue-100 text-blue-700 border border-blue-200' : 
-        'bg-amber-100 text-amber-700 border border-amber-200'
-      }`}>
+      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide ${(role || '').toLowerCase().includes('super') ? 'bg-indigo-100 text-indigo-700 border border-indigo-200' :
+        (role || '').toLowerCase().includes('admin') ? 'bg-blue-100 text-blue-700 border border-blue-200' :
+          'bg-amber-100 text-amber-700 border border-amber-200'
+        }`}>
         {role}
       </span>
     </td>
@@ -1680,30 +1688,30 @@ const LogAuditRow = ({ id, timestamp, username, designation, email, domain, role
       <td className="px-6 py-4 text-sm text-slate-600">{dateObj ? dateObj.toLocaleDateString() : 'N/A'}</td>
       <td className="px-6 py-4">
         {isLogin ? (
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-green-50 text-green-700 text-xs font-bold border border-green-100 whitespace-nowrap">
-                <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
-                {timeStr}
-            </span>
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-green-50 text-green-700 text-xs font-bold border border-green-100 whitespace-nowrap">
+            <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
+            {timeStr}
+          </span>
         ) : (
-            <span className="text-slate-300 text-xs">-</span>
+          <span className="text-slate-300 text-xs">-</span>
         )}
       </td>
       <td className="px-6 py-4">
         {isLogout ? (
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-red-50 text-red-700 text-xs font-bold border border-red-100 whitespace-nowrap">
-                <span className="w-1.5 h-1.5 rounded-full bg-red-500"></span>
-                {timeStr}
-            </span>
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-red-50 text-red-700 text-xs font-bold border border-red-100 whitespace-nowrap">
+            <span className="w-1.5 h-1.5 rounded-full bg-red-500"></span>
+            {timeStr}
+          </span>
         ) : (
-            <span className="text-slate-300 text-xs">-</span>
+          <span className="text-slate-300 text-xs">-</span>
         )}
       </td>
       <td className="px-6 py-4">
         <div className="flex items-center gap-2">
-            <div className="w-6 h-6 rounded-full bg-slate-100 flex items-center justify-center text-[10px] font-bold text-slate-500 uppercase border border-slate-200">
-                {(username || '?').charAt(0)}
-            </div>
-            <span className="font-bold text-slate-800 text-xs">{username || 'N/A'}</span>
+          <div className="w-6 h-6 rounded-full bg-slate-100 flex items-center justify-center text-[10px] font-bold text-slate-500 uppercase border border-slate-200">
+            {(username || '?').charAt(0)}
+          </div>
+          <span className="font-bold text-slate-800 text-xs">{username || 'N/A'}</span>
         </div>
       </td>
       <td className="px-6 py-4 text-slate-600 text-xs font-medium">{designation || 'N/A'}</td>
@@ -1712,17 +1720,16 @@ const LogAuditRow = ({ id, timestamp, username, designation, email, domain, role
         <span className="text-slate-600 text-xs font-medium bg-slate-50 px-2 py-1 rounded border border-slate-100 whitespace-nowrap">{domain}</span>
       </td>
       <td className="px-6 py-4">
-        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide border ${
-          (role || '').toLowerCase().includes('super') ? 'bg-indigo-50 text-indigo-700 border-indigo-100' : 
-          (role || '').toLowerCase().includes('admin') ? 'bg-blue-50 text-blue-700 border-blue-100' : 
-          'bg-slate-50 text-slate-600 border-slate-100'
-        }`}>
+        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide border ${(role || '').toLowerCase().includes('super') ? 'bg-indigo-50 text-indigo-700 border-indigo-100' :
+          (role || '').toLowerCase().includes('admin') ? 'bg-blue-50 text-blue-700 border-blue-100' :
+            'bg-slate-50 text-slate-600 border-slate-100'
+          }`}>
           {role}
         </span>
       </td>
       <td className="px-6 py-4">
         <span className="text-slate-700 text-xs font-semibold bg-slate-100 px-2 py-1 rounded border border-slate-200 whitespace-nowrap">
-            {action}
+          {action}
         </span>
       </td>
     </tr>
@@ -1733,8 +1740,9 @@ const LogAuditRow = ({ id, timestamp, username, designation, email, domain, role
 const toTitleCase = (str) => {
   if (!str) return "";
   return str
+    .trim()
     .toLowerCase()
-    .split(" ")
+    .split(/\s+/)
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(" ");
 };
@@ -2134,10 +2142,10 @@ const ReportDetailsModal = ({ report, onClose }) => {
 
         {/* Header - Non Printable Actions */}
         <div className="flex justify-between items-center p-4 border-b border-slate-100 sticky top-0 bg-white/80 backdrop-blur-md z-20 print:hidden rounded-t-xl">
-          
+
           <div className="flex items-center "><NovanectarLogo className="h-8" /></div>
           <div className="flex items-center gap-2">
-            
+
             <h4 className="font-bold text-slate-800">Report Preview</h4>
           </div>
           <div className="flex items-center gap-2">
