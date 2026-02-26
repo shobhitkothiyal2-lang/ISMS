@@ -54,7 +54,7 @@ def login():
 
         # Create log entry
         new_log = Log(
-            timestamp=datetime.datetime.now().isoformat(),
+            login_time=datetime.datetime.now().isoformat(),
             username=user.username,
             email=user.email,
             designation=user.designation if user.designation else "N/A",
@@ -107,7 +107,7 @@ def logout():
                 user.status = "Offline"
 
                 new_log = Log(
-                    timestamp=datetime.datetime.now().isoformat(),
+                    login_time=datetime.datetime.now().isoformat(),
                     username=user.username,
                     email=user.email,
                     designation=user.designation or "N/A",
@@ -141,7 +141,7 @@ def logout():
 @user_bp.route("/logs", methods=["GET"])
 def get_logs():
     try:
-        logs = Log.query.order_by(Log.timestamp.desc()).all()
+        logs = Log.query.order_by(Log.login_time.desc()).all()
         return jsonify([log.to_dict() for log in logs]), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500

@@ -33,13 +33,20 @@ def create_user():
     try:
         custom_id = data.get("userId") or generate_user_id()
 
+        designation = data.get("designation", "")
+        role = data.get("role", "User")
+
+        # Automatically set role to 'mentor' if designation is 'Mentor'
+        if designation and designation.lower() == "mentor":
+            role = "mentor"
+
         new_user = User(
             custom_id=custom_id,
             username=data.get("fullName"),
             email=data.get("email"),
-            role="User",
+            role=role,
             domain=data.get("Domain", data.get("department", "")),
-            designation=data.get("designation", ""),
+            designation=designation,
             status=data.get("status", "Active")
         )
         new_user.set_password(data.get("password", "123"))
@@ -62,7 +69,13 @@ def update_user(user_id):
         if "email" in data: user.email = data["email"]
         if "password" in data and data["password"]: user.set_password(data["password"])
         if "Domain" in data: user.domain = data["Domain"]
-        if "designation" in data: user.designation = data["designation"]
+        if "designation" in data: 
+            user.designation = data["designation"]
+            # Automatically set role to 'mentor' if designation is 'Mentor'
+            if user.designation and user.designation.lower() == "mentor":
+                user.role = "mentor"
+        if "role" in data and not (user.designation and user.designation.lower() == "mentor"):
+            user.role = data["role"]
         if "status" in data: user.status = data["status"]
         db.session.commit()
         return jsonify(user.to_dict()), 200

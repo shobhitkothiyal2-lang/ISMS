@@ -33,9 +33,14 @@ def create_admin():
     """Create a new admin or mentor."""
     data = request.json
     try:
+        designation = data.get("designation")
         role = data.get("role", "admin")
-        custom_id = data.get("adminId") or generate_admin_id(role)
+        
+        # Automatically set role to 'mentor' if designation is 'Mentor'
+        if designation and designation.lower() == "mentor":
+            role = "mentor"
 
+        custom_id = data.get("adminId") or generate_admin_id(role)
         # Prefer an explicit 'username' field; fall back to fullName
         username = data.get("username") or data.get("fullName")
 
@@ -45,7 +50,7 @@ def create_admin():
             email=data.get("email"),
             role=role,
             domain=data.get("Domain"), 
-            designation=data.get("designation"),
+            designation=designation,
             status=data.get("status", "Active")
         )
         new_admin.set_password(data.get("password", "123"))
@@ -71,7 +76,11 @@ def update_admin(admin_id):
         if "password" in data and data["password"]: admin.set_password(data["password"])
         if "role" in data: admin.role = data["role"]
         if "Domain" in data: admin.domain = data["Domain"]
-        if "designation" in data: admin.designation = data["designation"]
+        if "designation" in data: 
+            admin.designation = data["designation"]
+            # Automatically set role to 'mentor' if designation is 'Mentor'
+            if admin.designation and admin.designation.lower() == "mentor":
+                admin.role = "mentor"
         if "status" in data: admin.status = data["status"]
 
         db.session.commit()
