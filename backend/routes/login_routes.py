@@ -107,7 +107,7 @@ def logout():
                 user.status = "Offline"
 
                 new_log = Log(
-                    login_time=datetime.datetime.now().isoformat(),
+                    logout_time=datetime.datetime.now().isoformat(),
                     username=user.username,
                     email=user.email,
                     designation=user.designation or "N/A",

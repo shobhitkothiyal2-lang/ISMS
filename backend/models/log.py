@@ -18,7 +18,7 @@ class Log(db.Model):
             "username": self.username,
             "login_time": self.login_time,
             "logout_time": self.logout_time,
-            "timestamp": self.login_time,  # Frontend compatibility
+            "timestamp": self.login_time or self.logout_time,  # Frontend compatibility
             "email": self.email,
             "domain": self.domain,
             "role": self.role,

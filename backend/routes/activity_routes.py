@@ -30,9 +30,13 @@ def save_activity():
             with open(file_path, "wb") as f:
                 f.write(image_bytes)
 
+        action_type = data.get("action", "").lower()
+        is_logout = "logout" in action_type or "log out" in action_type or "logged out" in action_type
+        
         #  Create Log entry
         new_log = Log(
-            login_time=datetime.now().isoformat(),
+            login_time=datetime.now().isoformat() if not is_logout else None,
+            logout_time=datetime.now().isoformat() if is_logout else None,
             username=data.get("username"),
             email=data.get("email", "system@gmail.com"),
             domain=data.get("app_url","Application"),
