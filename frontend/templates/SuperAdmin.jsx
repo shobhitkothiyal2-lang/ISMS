@@ -2593,12 +2593,12 @@ const ReportDetailsModal = ({ report, onClose }) => {
           {report.weeklySummary && (
             <div className="mb-10">
               <div className="flex items-center gap-4 mb-4">
-                <h2 className="text-lg font-black text-slate-900 uppercase tracking-tighter text-blue-600">Weekly Achievement Summary</h2>
+                <h2 className="text-lg font-black uppercase tracking-tighter text-blue-600">Weekly Achievement Summary</h2>
                 <div className="flex-1 h-1 bg-blue-50 rounded-full"></div>
               </div>
               <div className="p-6 border-l-4 border-blue-600 bg-blue-50/30 rounded-r-2xl text-slate-700 text-sm font-medium font-mono italic">
                 {report.weeklySummary}
-              </div>
+              </div> 
             </div>
           )}
 
@@ -2905,7 +2905,7 @@ const ReportView = ({
                       </div>
                       <div className="p-0">
                         <textarea
-                          className="w-full h-full min-h-[70px] p-3 border-none bg-transparent outline-none focus:ring-2 focus:ring-inset focus:ring-blue-400 resize-y text-[13px] text-slate-800 placeholder:text-slate-400"
+                          className="w-full h-full min-h-17.5 p-3 border-none bg-transparent outline-none focus:ring-2 focus:ring-inset focus:ring-blue-400 resize-y text-[13px] text-slate-800 placeholder:text-slate-400"
                           placeholder={`Task 1: \nTask 2: \nTask 3: `}
                           value={taskItem.tasks}
                           onChange={(e) => {
