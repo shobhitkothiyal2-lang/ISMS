@@ -34,7 +34,7 @@ def login():
 
     if user and user.check_password(password):
         try:
-            user.status = "Active"
+            user.status = "Online"
             new_log = Log(
                 login_time=datetime.datetime.now().isoformat(),
                 username=user.username,

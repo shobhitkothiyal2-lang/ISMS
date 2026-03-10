@@ -49,8 +49,8 @@ def login():
                 "message": "Invalid password"
             }), 401
 
-        # Update status
-        user.status = "Active"
+        # Update status to Active
+        user.status = "Online"
 
         # Create log entry
         new_log = Log(

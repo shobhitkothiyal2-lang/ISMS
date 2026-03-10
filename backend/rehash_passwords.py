@@ -3,8 +3,7 @@ One-time migration: re-hash all plain-text passwords in admins/users tables.
 Run ONCE with: python rehash_passwords.py
 Safe to run multiple times — skips records already hashed.
 """
-from werkzeug.security import generate_password_hash, is_password_hash
-
+from werkzeug.security import generate_password_hash
 from app import create_app
 from models import db, Admin, User
 

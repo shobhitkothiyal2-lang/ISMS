@@ -51,7 +51,7 @@ def create_admin():
             role=role,
             domain=data.get("Domain"), 
             designation=designation,
-            status=data.get("status", "Active")
+            status=data.get("status", "Offline")
         )
         new_admin.set_password(data.get("password", "123"))
         db.session.add(new_admin)
@@ -104,3 +104,69 @@ def delete_admin(admin_id):
     except Exception as e:
         db.session.rollback()
         return jsonify({"error": str(e)}), 500
+
+@admins_bp.route("/login", methods=["POST"])
+def login():
+    """Handles admin login, updates status, and logs the event."""
+    data = request.json
+    username = data.get("username")
+    password = data.get("password")
+    role = data.get("role")
+
+    # Find admin by username and role from Login.jsx
+    admin = Admin.query.filter(
+        Admin.username.ilike(username),
+        Admin.role.ilike(role)
+    ).first()
+
+    if admin and admin.check_password(password):
+        # Update status to Online
+        admin.status = "Online"
+        
+        # Create a log entry for the login event
+        new_log = Log(
+            username=admin.username,
+            role=admin.role,
+            domain=admin.domain,
+            designation=admin.designation,
+            email=admin.email,
+            action="Admin Login",
+            status="Online",
+            login_time=datetime.datetime.now()
+        )
+        db.session.add(new_log)
+        db.session.commit()
+
+        return jsonify({
+            "message": "Login successful",
+            "user": admin.to_dict()
+        }), 200
+    else:
+        return jsonify({"message": "Invalid credentials"}), 401
+
+@admins_bp.route("/logout", methods=["POST"])
+def logout():
+    """Handles admin logout, updates status, and logs the event."""
+    data = request.json
+    username = data.get("username")
+
+    if not username:
+        return jsonify({"error": "Username is required"}), 400
+
+    admin = Admin.query.filter(Admin.username.ilike(username)).first()
+
+    if admin:
+        admin.status = "Offline"
+        
+        # Find the last login log for this user that hasn't been logged out
+        last_log = Log.query.filter_by(username=username, logout_time=None).order_by(Log.login_time.desc()).first()
+        
+        if last_log:
+            last_log.logout_time = datetime.datetime.now()
+            last_log.status = "Offline"
+            last_log.action = "Admin Session Completed"
+
+        db.session.commit()
+        return jsonify({"message": "Logout successful"}), 200
+    
+    return jsonify({"message": "Logout processed"}), 200

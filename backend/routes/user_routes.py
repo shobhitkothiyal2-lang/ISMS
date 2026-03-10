@@ -47,7 +47,7 @@ def create_user():
             role=role,
             domain=data.get("Domain", data.get("department", "")),
             designation=designation,
-            status=data.get("status", "Active")
+            status=data.get("status", "Offline")
         )
         new_user.set_password(data.get("password", "123"))
         db.session.add(new_user)

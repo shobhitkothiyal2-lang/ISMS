@@ -91,7 +91,7 @@ if __name__ == "__main__":
                 username="superadmin", 
                 email="superadmin@isms.com", 
                 role="superadmin", 
-                status="Active",
+                status="Offline",
                 custom_id="SA/IN/24/0001",
                 domain="Management",
                 designation="HR Head"
