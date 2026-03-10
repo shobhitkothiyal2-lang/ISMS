@@ -1878,7 +1878,7 @@ const AdminRow = ({ userId, name, role, designation, domain, status, email, onEd
 
 const LogAuditRow = ({
   id,
-  timestamp,         // fallback if login/logout missing
+  timestamp,         // fallback if needed
   login_time,
   logout_time,
   username,
@@ -1888,28 +1888,54 @@ const LogAuditRow = ({
   role,
   action,
 }) => {
-  // Prefer specific fields, fallback to timestamp
-  const loginValue  = login_time  || (action?.toLowerCase().includes('login')  ? timestamp : null);
-  const logoutValue = logout_time || (action?.toLowerCase().includes('logout') ? timestamp : null);
+  // Always show today's date (as you requested)
+  const todayDate = new Date().toLocaleDateString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric'
+  });
 
-  const displayDate = loginValue || logoutValue
-    ? formatIndianDateOnly(loginValue || logoutValue)
-    : "—";
+  // Login time
+  const displayLoginTime = login_time && login_time !== 'NULL' && login_time.trim()
+    ? formatIndianDateTime(login_time)
+    : null;
 
-  const displayLoginTime  = loginValue  ? formatIndianDateTime(loginValue)  : null;
-  const displayLogoutTime = logoutValue ? formatIndianDateTime(logoutValue) : null;
+  // Logout time – primary: logout_time, fallback: timestamp if action says logout
+  let displayLogoutTime = null;
 
-  const isLogin   = action?.toLowerCase().includes('login')  || action?.toLowerCase().includes('logged in');
-  const isLogout  = action?.toLowerCase().includes('logout') || action?.toLowerCase().includes('logged out');
-  const status    = isLogin ? 'Online' : isLogout ? 'Offline' : 'Pending';
+  if (logout_time && logout_time !== 'NULL' && logout_time.trim()) {
+    displayLogoutTime = formatIndianDateTime(logout_time);
+  } else if (
+    action?.toLowerCase().includes('logout') ||
+    action?.toLowerCase().includes('logged out') ||
+    action?.toLowerCase().includes('session end') ||
+    action?.toLowerCase().includes('end')
+  ) {
+    // Fallback to timestamp or login_time if logout_time is missing
+    const fallbackTime = logout_time || timestamp || login_time;
+    if (fallbackTime) {
+      displayLogoutTime = formatIndianDateTime(fallbackTime);
+    }
+  }
+
+  const isLogin = action?.toLowerCase().includes('login') || action?.toLowerCase().includes('logged in');
+  const isLogout =
+    action?.toLowerCase().includes('logout') ||
+    action?.toLowerCase().includes('logged out') ||
+    action?.toLowerCase().includes('session end');
+
+  const status = isLogin ? 'Online' : isLogout ? 'Offline' : 'Pending';
 
   return (
     <tr className="hover:bg-slate-50 transition-colors border-b border-slate-100 last:border-0 group">
       <td className="px-6 py-4 font-mono text-xs text-slate-400 group-hover:text-slate-600 transition-colors">
         #{id}
       </td>
-      <td className="px-6 py-4 text-sm text-slate-600">{displayDate}</td>
 
+      <td className="px-6 py-4 text-sm text-slate-600 font-medium">{todayDate}</td>
+
+      {/* LOGIN TIME */}
       <td className="px-6 py-4">
         {displayLoginTime ? (
           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-green-50 text-green-700 text-xs font-bold border border-green-100 whitespace-nowrap">
@@ -1921,6 +1947,7 @@ const LogAuditRow = ({
         )}
       </td>
 
+      {/* LOGOUT TIME – now more likely to show something */}
       <td className="px-6 py-4">
         {displayLogoutTime ? (
           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-red-50 text-red-700 text-xs font-bold border border-red-100 whitespace-nowrap">
