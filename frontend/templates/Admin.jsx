@@ -4,6 +4,79 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { API_BASE_URL } from './config';
 import logo from '../static/NNlogo.jpeg';
 
+
+// ────────────────────────────────────────────────
+//           DATE / TIME FORMATTING HELPERS
+// ────────────────────────────────────────────────
+
+function formatIndianDateTime(value) {
+  if (!value || value === 'NULL' || value.trim() === '') return "—";
+
+  try {
+    let normalized = value.trim();
+
+    // Replace space with T if it's date time with space (common DB format)
+    if (normalized.includes(' ') && !normalized.includes('T')) {
+      normalized = normalized.replace(' ', 'T');
+    }
+
+    // If no timezone → assume it's IST and append offset
+    if (!normalized.includes('Z') && !normalized.includes('+') && !normalized.includes('-', 10)) {
+      normalized += '+05:30';
+    }
+
+    const date = new Date(normalized);
+
+    if (isNaN(date.getTime())) {
+      console.warn("Parse failed even after normalize:", value, "→", normalized);
+      return "Invalid date";
+    }
+
+    return date.toLocaleString('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      dateStyle: 'medium',
+      timeStyle: 'short',
+      hour12: false
+    });
+  } catch (err) {
+    console.warn("Date format error:", value, err);
+    return "Invalid date";
+  }
+}
+
+function formatIndianTimeOnly(value) {
+  if (!value || value === 'NULL' || value.trim() === '') return "—";
+
+  try {
+    let normalized = value.trim();
+
+    if (normalized.includes(' ') && !normalized.includes('T')) {
+      normalized = normalized.replace(' ', 'T');
+    }
+
+    if (!normalized.includes('Z') && !normalized.includes('+') && !normalized.includes('-', 10)) {
+      normalized += '+05:30';
+    }
+
+    const date = new Date(normalized);
+
+    if (isNaN(date.getTime())) {
+      return "Invalid time";
+    }
+
+    return date.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', timeStyle: 'short', hour12: false });
+  } catch (err) {
+    return "Invalid time";
+  }
+}
+
+function formatIndianDateOnly(value) {
+  if (!value || value === 'NULL' || value.trim() === '') return "—";
+  const dateStr = value.trim().split(' ')[0];
+  const date = new Date(dateStr);
+  if (isNaN(date.getTime())) return "—";
+  return date.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' });
+}
 const Admin = () => {
     const [sidebarOpen, setSidebarOpen] = useState(true);
     const [isLoading, setIsLoading] = useState(false);
@@ -184,20 +257,27 @@ const Admin = () => {
 
                 // No domain filtering — show all users
                 const usersWithActivity = data.map(user => {
-                    // Find all logs for this specific user, sorted by newest first
-                    const userLogs = allLogs.filter(log => log.username?.trim().toLowerCase() === user.username?.trim().toLowerCase())
-                        .slice().reverse();
+                    const userLogs = allLogs
+                        .filter(log => log.username?.trim().toLowerCase() === user.username?.trim().toLowerCase())
+                        .sort((a, b) => new Date(b.login_time || b.timestamp || 0) - new Date(a.login_time || a.timestamp || 0));
 
-                    // Find the latest record that has a login time
-                    const lastLoginLog = userLogs.find(log => log.login_time || (log.action && (log.action.toLowerCase().includes('login') || log.action.toLowerCase().includes('log in') || log.action.toLowerCase().includes('logged in'))));
+                    const lastLoginLog = userLogs.find(log => log.login_time || log.action?.toLowerCase().includes('login'));
+                    const lastLogoutLog = userLogs.find(log => log.logout_time || log.action?.toLowerCase().includes('logout') || log.action?.toLowerCase().includes('session'));
 
-                    // Find the latest record that has a logout time
-                    const lastLogoutLog = userLogs.find(log => log.logout_time || (log.action && (log.action.toLowerCase().includes('logout') || log.action.toLowerCase().includes('log out') || log.action.toLowerCase().includes('logged out') || log.action.toLowerCase().includes('session completed'))));
+                    const loginTime = lastLoginLog ? new Date(lastLoginLog.login_time || lastLoginLog.timestamp) : null;
+                    const logoutTime = lastLogoutLog ? new Date(lastLogoutLog.logout_time || lastLogoutLog.timestamp) : null;
+
+                    let derivedStatus = 'Offline';
+                    if (loginTime && (!logoutTime || loginTime > logoutTime)) {
+                        derivedStatus = 'Online';
+                    }
 
                     return {
                         ...user,
-                        login_time: lastLoginLog ? (lastLoginLog.login_time || lastLoginLog.timestamp) : null,
-                        logout_time: lastLogoutLog ? (lastLogoutLog.logout_time || lastLogoutLog.timestamp) : null
+                        login_time: lastLoginLog ? lastLoginLog.login_time : null,
+                        logout_time: lastLogoutLog ? lastLogoutLog.logout_time : null,
+                        // Override status with a more reliable derived value
+                        status: derivedStatus
                     };
                 });
 
@@ -247,20 +327,27 @@ const Admin = () => {
 
                 // No domain filtering — show all users across all domains
                 const usersWithActivity = users.map(user => {
-                    // Find all logs for this specific user, sorted by newest first
-                    const userLogs = allLogs.filter(log => log.username?.trim().toLowerCase() === user.username?.trim().toLowerCase())
-                        .slice().reverse();
+                    const userLogs = allLogs
+                        .filter(log => log.username?.trim().toLowerCase() === user.username?.trim().toLowerCase())
+                        .sort((a, b) => new Date(b.login_time || b.timestamp || 0) - new Date(a.login_time || a.timestamp || 0));
 
-                    // Find the latest record that has a login time
-                    const lastLoginLog = userLogs.find(log => log.login_time || (log.action && (log.action.toLowerCase().includes('login') || log.action.toLowerCase().includes('log in') || log.action.toLowerCase().includes('logged in'))));
+                    const lastLoginLog = userLogs.find(log => log.login_time || log.action?.toLowerCase().includes('login'));
+                    const lastLogoutLog = userLogs.find(log => log.logout_time || log.action?.toLowerCase().includes('logout') || log.action?.toLowerCase().includes('session'));
 
-                    // Find the latest record that has a logout time
-                    const lastLogoutLog = userLogs.find(log => log.logout_time || (log.action && (log.action.toLowerCase().includes('logout') || log.action.toLowerCase().includes('log out') || log.action.toLowerCase().includes('logged out') || log.action.toLowerCase().includes('session completed'))));
+                    const loginTime = lastLoginLog ? new Date(lastLoginLog.login_time || lastLoginLog.timestamp) : null;
+                    const logoutTime = lastLogoutLog ? new Date(lastLogoutLog.logout_time || lastLogoutLog.timestamp) : null;
+
+                    let derivedStatus = 'Offline';
+                    if (loginTime && (!logoutTime || loginTime > logoutTime)) {
+                        derivedStatus = 'Online';
+                    }
 
                     return {
                         ...user,
-                        login_time: lastLoginLog ? (lastLoginLog.login_time || lastLoginLog.timestamp) : null,
-                        logout_time: lastLogoutLog ? (lastLogoutLog.logout_time || lastLogoutLog.timestamp) : null
+                        login_time: lastLoginLog ? lastLoginLog.login_time : null,
+                        logout_time: lastLogoutLog ? lastLogoutLog.logout_time : null,
+                        // Override status with a more reliable derived value
+                        status: derivedStatus
                     };
                 });
 
@@ -1181,17 +1268,17 @@ const LogStartRow = ({ id, timestamp, login_time, logout_time, username, designa
     const status = isLogin ? 'Online' : isLogout ? 'Offline' : 'Pending';
     
     // Use logout_time field if available, otherwise fallback to timestamp if it's a logout action
-    const loginTimeValue = login_time || (!isLogout ? timestamp : null);
-    const logoutTimeValue = logout_time || (isLogout ? timestamp : null);
+    const loginTimeValue = login_time;
+    const logoutTimeValue = logout_time;
 
-    const displayLoginTime = loginTimeValue ? new Date(loginTimeValue).toLocaleTimeString() : null;
-    const displayLogoutTime = logoutTimeValue ? new Date(logoutTimeValue).toLocaleTimeString() : null;
-    const displayDate = (loginTimeValue || logoutTimeValue) ? new Date(loginTimeValue || logoutTimeValue).toLocaleDateString('en-GB') : 'N/A';
+    const displayLoginTime = formatIndianTimeOnly(loginTimeValue);
+    const displayLogoutTime = formatIndianTimeOnly(logoutTimeValue);
+    const displayDate = formatIndianDateOnly(loginTimeValue || logoutTimeValue);
 
     return (
       <tr className="bg-white hover:bg-slate-50 transition-colors border-b border-slate-100 last:border-0 group">
         <td className="px-6 py-4 font-mono text-xs text-slate-400 group-hover:text-slate-600 transition-colors">#{id}</td>
-        <td className="px-6 py-4 text-sm text-slate-600">{displayDate}</td>
+        <td className="px-6 py-4 text-sm text-slate-600 font-medium">{displayDate}</td>
         <td className="px-6 py-4">
             {displayLoginTime ? (
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-green-50 text-green-700 text-xs font-bold border border-green-100 whitespace-nowrap">
@@ -1199,7 +1286,7 @@ const LogStartRow = ({ id, timestamp, login_time, logout_time, username, designa
                     {displayLoginTime}
                 </span>
             ) : (
-                <span className="text-slate-300 text-xs">-</span>
+                <span className="text-slate-300 text-xs">—</span>
             )}
         </td>
         <td className="px-6 py-4">
@@ -1209,7 +1296,7 @@ const LogStartRow = ({ id, timestamp, login_time, logout_time, username, designa
                     {displayLogoutTime}
                 </span>
             ) : (
-                <span className="text-slate-300 text-xs">-</span>
+                <span className="text-slate-300 text-xs">—</span>
             )}
         </td>
         <td className="px-6 py-4">

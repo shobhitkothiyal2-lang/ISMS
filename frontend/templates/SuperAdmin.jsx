@@ -43,6 +43,40 @@ function formatIndianDateTime(value) {
   }
 }
 
+function formatIndianTimeOnly(value) {
+  if (!value || value === 'NULL' || value.trim() === '') return "—";
+
+  try {
+    let normalized = value.trim();
+
+    // Replace space with T if it's date time with space (common DB format)
+    if (normalized.includes(' ') && !normalized.includes('T')) {
+      normalized = normalized.replace(' ', 'T');
+    }
+
+    // If no timezone → assume it's IST and append offset
+    if (!normalized.includes('Z') && !normalized.includes('+') && !normalized.includes('-', 10)) {
+      normalized += '+05:30';
+    }
+
+    const date = new Date(normalized);
+
+    if (isNaN(date.getTime())) {
+      console.warn("Parse failed for time-only:", value, "→", normalized);
+      return "Invalid time";
+    }
+
+    return date.toLocaleTimeString('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      timeStyle: 'short',
+      hour12: false
+    });
+  } catch (err) {
+    console.warn("Time format error:", value, err);
+    return "Invalid time";
+  }
+}
+
 function formatIndianDateOnly(value) {
   if (!value || value === 'NULL' || value.trim() === '') return "—";
 
@@ -1801,8 +1835,7 @@ const UserRow = ({ userId, name, email, role, domain, designation, status, onEdi
       <div className={`flex items-center gap-2 px-2 py-1 rounded-md w-fit ${status === "Online" ? "bg-green-50 text-green-700 border border-green-100" : "bg-slate-50 text-slate-600 border border-slate-100"}`}>
         <span className={`w-1.5 h-1.5 rounded-full ${status === 'Online' ? "bg-green-500" : "bg-slate-400"}`}></span>
         <span className="text-xs font-bold">{status === 'Online' ? 'Online' : 'Offline'}</span>
-        <span className="text-xs font-bold">{status === 'Online' ? 'Online' : 'Offline'}</span>
-      </div>
+       </div>
     </td>
     <td className="px-6 py-4 text-right">
       <div className="flex items-center justify-end gap-2">
@@ -1848,7 +1881,7 @@ const AdminRow = ({ userId, name, role, designation, domain, status, email, onEd
     <td className="px-6 py-4">
       <div className={`flex items-center gap-2 px-2 py-1 rounded-md w-fit ${status === "Online" ? "bg-green-50 text-green-700 border border-green-100" : "bg-slate-50 text-slate-600 border border-slate-100"}`}>
         <span className={`w-1.5 h-1.5 rounded-full ${status === "Online" ? "bg-green-500" : "bg-slate-400"}`}></span>
-        <span className="text-xs font-bold">{status}</span>
+        <span className="text-xs font-bold">{status === 'Online' ? 'Online' : 'Offline'}</span>
       </div>
     </td>
     <td className="px-6 py-4 text-right">
@@ -1888,36 +1921,17 @@ const LogAuditRow = ({
   role,
   action,
 }) => {
-  // Always show today's date (as you requested)
-  const todayDate = new Date().toLocaleDateString('en-IN', {
-    timeZone: 'Asia/Kolkata',
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric'
-  });
+  const logDate = formatIndianDateOnly(login_time || logout_time || timestamp);
 
   // Login time
   const displayLoginTime = login_time && login_time !== 'NULL' && login_time.trim()
-    ? formatIndianDateTime(login_time)
+    ? formatIndianTimeOnly(login_time)
     : null;
 
-  // Logout time – primary: logout_time, fallback: timestamp if action says logout
-  let displayLogoutTime = null;
-
-  if (logout_time && logout_time !== 'NULL' && logout_time.trim()) {
-    displayLogoutTime = formatIndianDateTime(logout_time);
-  } else if (
-    action?.toLowerCase().includes('logout') ||
-    action?.toLowerCase().includes('logged out') ||
-    action?.toLowerCase().includes('session end') ||
-    action?.toLowerCase().includes('end')
-  ) {
-    // Fallback to timestamp or login_time if logout_time is missing
-    const fallbackTime = logout_time || timestamp || login_time;
-    if (fallbackTime) {
-      displayLogoutTime = formatIndianDateTime(fallbackTime);
-    }
-  }
+  // Logout time - strictly use the logout_time field
+  const displayLogoutTime = logout_time && logout_time !== 'NULL' && logout_time.trim()
+    ? formatIndianTimeOnly(logout_time)
+    : null;
 
   const isLogin = action?.toLowerCase().includes('login') || action?.toLowerCase().includes('logged in');
   const isLogout =
@@ -1933,7 +1947,7 @@ const LogAuditRow = ({
         #{id}
       </td>
 
-      <td className="px-6 py-4 text-sm text-slate-600 font-medium">{todayDate}</td>
+      <td className="px-6 py-4 text-sm text-slate-600 font-medium">{logDate}</td>
 
       {/* LOGIN TIME */}
       <td className="px-6 py-4">
