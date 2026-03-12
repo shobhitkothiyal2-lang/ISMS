@@ -58,7 +58,8 @@ const SubAdmin = () => {
 
             const response = await fetch(`${API_BASE_URL}/api/${endpoint}`, {
                 method: 'GET',
-                headers: { 'Content-Type': 'application/json' }
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include'
             });
 
             if (!response.ok) throw new Error(`Failed to fetch reports`);
@@ -75,7 +76,7 @@ const SubAdmin = () => {
 
             pollingIntervalRef.current = setInterval(async () => {
                 try {
-                    const res = await fetch(`${API_BASE_URL}/api/${endpoint}`);
+                    const res = await fetch(`${API_BASE_URL}/api/${endpoint}`, { credentials: "include" });
                     if (res.ok) {
                         const updatedReports = await res.json();
                         setReportsData(isSpecialDomain ? updatedReports : updatedReports.filter(r => (r.domain || r.Domain) === mentorDomain));
@@ -94,8 +95,8 @@ const SubAdmin = () => {
     const fetchUsers = async () => {
         try {
             const [uRes, lRes] = await Promise.all([
-                fetch(`${API_BASE_URL}/api/users`),
-                fetch(`${API_BASE_URL}/api/logs`)
+                fetch(`${API_BASE_URL}/api/users`, { credentials: "include" }),
+                fetch(`${API_BASE_URL}/api/logs`, { credentials: "include" })
             ]);
 
             if (uRes.ok && lRes.ok) {
@@ -148,9 +149,9 @@ const SubAdmin = () => {
     const fetchDashboardData = async () => {
         try {
             const [uRes, rRes, lRes] = await Promise.all([
-                fetch(`${API_BASE_URL}/api/users`),
-                fetch(`${API_BASE_URL}/api/daily-reports`),
-                fetch(`${API_BASE_URL}/api/logs`)
+                fetch(`${API_BASE_URL}/api/users`, { credentials: "include" }),
+                fetch(`${API_BASE_URL}/api/daily-reports`, { credentials: "include" }),
+                fetch(`${API_BASE_URL}/api/logs`, { credentials: "include" })
             ]);
 
             const mentorDomain = currentUser.domain;
@@ -255,6 +256,7 @@ const SubAdmin = () => {
                 headers: {
                     'Content-Type': 'application/json',
                 },
+                credentials: 'include',
                 body: JSON.stringify({
                     username: currentUser.username
                 })
@@ -286,6 +288,7 @@ const SubAdmin = () => {
             const response = await fetch(`${API_BASE_URL}/api/tasks`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
                 body: JSON.stringify(taskData)
             });
 
@@ -311,9 +314,10 @@ const SubAdmin = () => {
 
         // Send notification to Super Admin
         try {
-            await fetch(`${API_BASE_URL}/api/notifications/super-admin`, {
+            await fetch(`${API_BASE_URL}/api/notifications/superadmin`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
                 body: JSON.stringify({ taskId, message: "Task checked by Mentor" })
             });
             console.log(`Notification sent to Super Admin for task ${taskId}`);
@@ -354,6 +358,7 @@ const SubAdmin = () => {
               await fetch(`${API_BASE_URL}/api/logout`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
+                credentials: "include",
                 body: JSON.stringify({ username }),
                 keepalive: true
               });
@@ -416,7 +421,7 @@ const SubAdmin = () => {
             setTaskMenuOpen(true);
 
             // Fetch tasks from backend
-            fetch(`${API_BASE_URL}/api/tasks`)
+            fetch(`${API_BASE_URL}/api/tasks`, { credentials: "include" })
                 .then(res => res.ok ? res.json() : [])
                 .then(data => setTasks(data))
                 .catch(err => console.error("Failed to fetch tasks:", err));

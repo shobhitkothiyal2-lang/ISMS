@@ -24,10 +24,8 @@ backend/storage/screenshots/
 
 # --- Environment Variables ---
 .env
-.env.*
-# Allow example files to be committed (they have no real secrets)
-!.env.example
-!.env.*.example
+.env.local
+.env.development.local
 .env.test.local
 .env.production.local
 

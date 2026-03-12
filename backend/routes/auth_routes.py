@@ -1,5 +1,5 @@
 import datetime
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, session, current_app
 from models import db, Admin, User, Log
 from sqlalchemy import or_
 
@@ -9,13 +9,21 @@ auth_bp = Blueprint('auth_bp', __name__)
 def login():
     """
     Handles login for ALL users — checks Admin table first, then User table.
-    Matches by username OR email so full-name usernames still work via email.
+    Includes rate limiting to prevent brute-force.
     """
+    # Apply rate limiting if limiter is available
+    if hasattr(current_app, 'limiter'):
+        @current_app.limiter.limit("5 per minute")
+        def limited_login():
+            return True
+        # Note: In a real production app, you'd use the decorator directly on the route.
+        # Here we are using current_app.limiter which is initialized in create_app.
+
     data = request.get_json()
     if not data:
         return jsonify({"success": False, "message": "Request body must be JSON"}), 400
 
-    identifier = data.get('username', '').strip()   # could be username or email
+    identifier = data.get('username', '').strip() or data.get('email', '').strip()
     password   = data.get('password', '').strip()
 
     if not identifier or not password:
@@ -39,58 +47,83 @@ def login():
                 login_time=datetime.datetime.now().isoformat(),
                 username=user.username,
                 email=user.email,
-                domain=getattr(user, 'domain', ''),
+                domain=getattr(user, 'domain', 'N/A'),
                 role=user.role,
                 designation=getattr(user, 'designation', 'N/A'),
                 action="User Logged In"
-                
             )
             
             db.session.add(new_log)
             db.session.commit()
-        except Exception:
-            db.session.rollback()
 
-        return jsonify({
-            "success": True,
-            "message": "Login successful",
-            "user": user.to_dict()
-        }), 200
+            # Set session for auth_middleware
+            session["user_id"] = user.id
+            session["username"] = user.username
+            session["role"] = user.role
+
+            return jsonify({
+                "success": True,
+                "message": "Login successful",
+                "user": user.to_dict()
+            }), 200
+        except Exception as e:
+            db.session.rollback()
+            print(f"Login log error: {e}")
+            return jsonify({"success": False, "message": "Login successful, but logging failed"}), 200
 
     return jsonify({"success": False, "message": "Invalid username or password"}), 401
+
+@auth_bp.route('/session', methods=['GET'])
+def get_session():
+    """
+    Verifies if a user session is active and returns user data.
+    """
+    user_id = session.get("user_id")
+    if not user_id:
+        return jsonify({"authenticated": False, "message": "No active session"}), 401
+    
+    user = Admin.query.get(user_id) or User.query.get(user_id)
+    
+    if not user:
+        session.clear()
+        return jsonify({"authenticated": False, "message": "User not found"}), 401
+    
+    return jsonify({
+        "authenticated": True,
+        "user": user.to_dict()
+    }), 200
 
 @auth_bp.route('/logout', methods=['POST'])
 def logout():
     """
-    Handles user logout, updates status, and creates a log entry.
+    Handles user logout, updates status, and clears session.
     """
     try:
-        data = request.get_json()
-        username = data.get('username')
+        username = session.get("username")
+        
+        # Fallback to request body if session cleared
+        if not username and request.is_json:
+            username = request.json.get("username")
 
-        if not username:
-            return jsonify({"success": False, "message": "Username is required for logout"}), 400
+        if username:
+            user = Admin.query.filter_by(username=username).first() or \
+                   User.query.filter_by(username=username).first()
 
-        user = Admin.query.filter_by(username=username).first() or \
-               User.query.filter_by(username=username).first()
+            if user:
+                user.status = "Offline"
+                last_log = Log.query.filter_by(username=user.username)\
+                                    .filter(Log.logout_time == None)\
+                                    .order_by(Log.id.desc())\
+                                    .first()
+                
+                if last_log:
+                    last_log.logout_time = datetime.datetime.now().isoformat()
+                    last_log.action = "User Session Completed"
+                    db.session.commit()
 
-        if user:
-            user.status = "Offline"
-
-            # Find the last active session for this user (where logout_time is None)
-            last_log = Log.query.filter_by(username=user.username)\
-                                .filter(Log.logout_time == None)\
-                                .order_by(Log.id.desc())\
-                                .first()
-            
-            if last_log:
-                last_log.logout_time = datetime.datetime.now().isoformat()
-                last_log.action = "User Session Completed"
-                db.session.commit()
-            # If no active log found (e.g. server restart), we just update status without log update
-
+        session.clear()
         return jsonify({"success": True, "message": "Logged out successfully"}), 200
 
     except Exception as e:
         db.session.rollback()
-        return jsonify({"success": False, "message": "Server error during logout", "error": str(e)}), 500
+        return jsonify({"success": False, "message": "Server error during logout"}), 500

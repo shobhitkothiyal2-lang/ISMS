@@ -40,6 +40,7 @@ const Admin = () => {
             const response = await fetch(`${API_BASE_URL}/api/logout`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
+                credentials: "include",
                 body: JSON.stringify({
                     username: currentUser.username
                 }),
@@ -108,7 +109,8 @@ const Admin = () => {
                 method: 'GET',
                 headers: {
                     'Content-Type': 'application/json',
-                }
+                },
+                credentials: 'include'
             });
 
             if (!response.ok) {
@@ -127,7 +129,8 @@ const Admin = () => {
                         method: 'GET',
                         headers: {
                             'Content-Type': 'application/json',
-                        }
+                        },
+                        credentials: 'include'
                     });
 
                     if (refreshResponse.ok) {
@@ -151,8 +154,8 @@ const Admin = () => {
     const fetchMentors = async () => {
         try {
             const [mRes, uRes] = await Promise.all([
-                fetch(`${API_BASE_URL}/api/admins?role=mentor`),
-                fetch(`${API_BASE_URL}/api/users`)
+                fetch(`${API_BASE_URL}/api/admins?role=mentor`, { credentials: "include" }),
+                fetch(`${API_BASE_URL}/api/users`, { credentials: "include" })
             ]);
             if (mRes.ok) {
                 const mentors = await mRes.json();
@@ -174,8 +177,8 @@ const Admin = () => {
     const fetchUsers = async () => {
         try {
             const [uRes, lRes] = await Promise.all([
-                fetch(`${API_BASE_URL}/api/users`),
-                fetch(`${API_BASE_URL}/api/logs`)
+                fetch(`${API_BASE_URL}/api/users`, { credentials: "include" }),
+                fetch(`${API_BASE_URL}/api/logs`, { credentials: "include" })
             ]);
 
             if (uRes.ok && lRes.ok) {
@@ -217,7 +220,7 @@ const Admin = () => {
 
     const fetchLogs = async () => {
         try {
-            const response = await fetch(`${API_BASE_URL}/api/logs`);
+            const response = await fetch(`${API_BASE_URL}/api/logs`, { credentials: "include" });
             if (response.ok) {
                 const data = await response.json();
                 const mentorDomain = currentUser.domain;
@@ -234,11 +237,11 @@ const Admin = () => {
     const fetchDashboardData = async () => {
         try {
             const [uRes, rRes, lRes, mRes, mentorsRes] = await Promise.all([
-                fetch(`${API_BASE_URL}/api/users`),
-                fetch(`${API_BASE_URL}/api/daily-reports`),
-                fetch(`${API_BASE_URL}/api/logs`),
-                fetch(`${API_BASE_URL}/api/mentors/performance`),
-                fetch(`${API_BASE_URL}/api/admins?role=mentor`)
+                fetch(`${API_BASE_URL}/api/users`, { credentials: "include" }),
+                fetch(`${API_BASE_URL}/api/daily-reports`, { credentials: "include" }),
+                fetch(`${API_BASE_URL}/api/logs`, { credentials: "include" }),
+                fetch(`${API_BASE_URL}/api/mentors/performance`, { credentials: "include" }),
+                fetch(`${API_BASE_URL}/api/admins?role=mentor`, { credentials: "include" })
             ]);
 
             if (uRes.ok && lRes.ok) {
@@ -338,7 +341,7 @@ const Admin = () => {
         } else if (path.endsWith('/domains')) {
             setCurrentView('domains');
             if (usersList.length === 0) {
-                fetch(`${API_BASE_URL}/api/users`)
+                fetch(`${API_BASE_URL}/api/users`, { credentials: "include" })
                     .then(res => res.ok ? res.json() : [])
                     .then(data => setUsersList(data))
                     .catch(err => console.error("Failed to fetch users for domains", err));
@@ -396,6 +399,7 @@ const Admin = () => {
               await fetch(`${API_BASE_URL}/api/logout`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
+                credentials: "include",
                 body: JSON.stringify({
                   username: currentUser.username
                 }),

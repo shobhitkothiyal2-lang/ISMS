@@ -5,67 +5,199 @@ from config import Config
 import json
 import os
 import base64
+import pytz
+
+IST = pytz.timezone("Asia/Kolkata")
 
 activity_bp = Blueprint('activity', __name__)
 
 
-@activity_bp.route("/activity", methods=["POST"])
+@activity_bp.route("/activity", methods=["POST", "PATCH"])
 def save_activity():
+
     data = request.json
+    print("Incoming Activity:", data)
+
+    username = data.get("username")
+    action = data.get("action")
 
     try:
+
+        # =========================
+        # SCREENSHOT HANDLING
+        # =========================
+
         screenshot_data = data.get("screenshot")
         file_path = None
 
-        #  HANDLE SCREENSHOT HERE
         if screenshot_data:
-            header, encoded = screenshot_data.split(",", 1)
-            image_bytes = base64.b64decode(encoded)
+
+            image_bytes = base64.b64decode(screenshot_data)
 
             os.makedirs(Config.SCREENSHOT_FOLDER, exist_ok=True)
 
-            filename = f"{data.get('username')}_{int(datetime.utcnow().timestamp())}.png"
+            filename = f"{username}_{int(datetime.now(IST).timestamp())}.png"
+
             file_path = os.path.join(Config.SCREENSHOT_FOLDER, filename)
 
             with open(file_path, "wb") as f:
                 f.write(image_bytes)
 
-        action_type = data.get("action", "").lower()
-        is_logout = "logout" in action_type or "log out" in action_type or "logged out" in action_type
-        
-        #  Create Log entry
-        new_log = Log(
-            login_time=datetime.now().isoformat() if not is_logout else None,
-            logout_time=datetime.now().isoformat() if is_logout else None,
-            username=data.get("username"),
-            email=data.get("email", "system@gmail.com"),
-            domain=data.get("app_url","Application"),
-            role="User",
-            action=data.get("action")
-        )
+        # =========================
+        # LOGIN EVENT
+        # =========================
 
-        #  Create Activity entry
-        new_activity = Activity(
-            username=data.get("username"),
-            action=data.get("action"),
-            login_time=datetime.now() if data.get("action") == "login" else None,
-            logout_time=datetime.now() if data.get("action") == "logout" else None,
-            idle_time=data.get("idle_time"),
-            screenshot_path=file_path,  # ✅ save file path, not base64
-            app_url=data.get("app_url"),
-            activity_metadata=json.dumps({
-                "timestamp": data.get("timestamp")
-            }) if data.get("timestamp") else None,
-            created_at=datetime.utcnow()
-        )
+        if action == "login":
 
-        db.session.add(new_log)
-        db.session.add(new_activity)
+            new_log = Log(
+                username=username,
+                login_time=datetime.now(IST).isoformat(),
+                logout_time=None,
+                email=data.get("email", "system@gmail.com"),
+                domain="Agent",
+                role="User",
+                action="login"
+            )
+
+            db.session.add(new_log)
+
+            activity = Activity(
+                username=username,
+                action="login",
+                login_time=datetime.now(IST),
+                created_at=datetime.now(IST)
+            )
+
+            db.session.add(activity)
+
+        # =========================
+        # LOGOUT EVENT
+        # =========================
+
+        elif action == "logout":
+
+            last_login = Log.query.filter(
+                Log.username == username,
+                Log.logout_time == None
+            ).order_by(Log.id.desc()).first()
+
+            if last_login:
+                last_login.logout_time = datetime.now(IST).isoformat()
+                last_login.action = "logout"
+
+            activity = Activity(
+                username=username,
+                action="logout",
+                logout_time=datetime.now(IST),
+                created_at=datetime.now(IST)
+            )
+
+            db.session.add(activity)
+
+        # =========================
+        # IDLE START
+        # =========================
+
+        elif action == "idle_start":
+
+            idle_activity = Activity(
+                username=username,
+                action="idle",
+                idle_time=None,
+                activity_metadata=json.dumps({
+                    "idle_start": datetime.now(IST).isoformat()
+                }),
+                created_at=datetime.now(IST)
+            )
+
+            db.session.add(idle_activity)
+
+        # =========================
+        # IDLE END
+        # =========================
+
+        elif action == "idle_end":
+
+            duration = data.get("duration")
+
+            if not duration:
+                metadata = data.get("metadata", {})
+                duration = metadata.get("duration")
+
+            idle_start = None
+            if data.get("metadata"):
+                idle_start = data["metadata"].get("idle_start")
+
+            last_idle = Activity.query.filter(
+                Activity.username == username,
+                Activity.action == "idle",
+                Activity.idle_time == None
+            ).order_by(Activity.id.desc()).first()
+
+            if last_idle:
+
+                last_idle.idle_time = duration
+
+                last_idle.activity_metadata = json.dumps({
+                    "idle_start": idle_start,
+                    "idle_end": datetime.now(IST).isoformat(),
+                    "duration": duration
+                })
+
+            else:
+
+                activity = Activity(
+                    username=username,
+                    action="idle",
+                    idle_time=duration,
+                    activity_metadata=json.dumps({
+                        "idle_start": idle_start,
+                        "idle_end": datetime.now(IST).isoformat(),
+                        "duration": duration
+                    }),
+                    created_at=datetime.now(IST)
+                )
+
+                db.session.add(activity)
+
+        # =========================
+        # APP USAGE
+        # =========================
+
+        elif action == "app_usage":
+
+            activity = Activity(
+                username=username,
+                action="app_usage",
+                app_url=data.get("app_url"),
+                created_at=datetime.now(IST)
+            )
+
+            db.session.add(activity)
+
+        # =========================
+        # SCREENSHOT EVENT
+        # =========================
+
+        elif action == "screenshot":
+
+            activity = Activity(
+                username=username,
+                action="screenshot",
+                screenshot_path=file_path,
+                created_at=datetime.now(IST)
+            )
+
+            db.session.add(activity)
+
         db.session.commit()
 
-        return jsonify({"success": True}), 201
+        return jsonify({"success": True}), 200
 
     except Exception as e:
         db.session.rollback()
-        print("ERROR:", e)
-        return jsonify({"success": False, "error": str(e)}), 500
+        print("ERROR:", e)  # Log server-side only
+        return jsonify({
+            "success": False,
+            "error": "An internal error occurred. Please try again."
+        }), 500

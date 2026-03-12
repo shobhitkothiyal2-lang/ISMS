@@ -12,7 +12,7 @@ const App = () => {
             <Routes>
                 <Route path="/" element={<Login />} />
                 <Route path="/admin/*" element={<Admin />} />
-                <Route path="/super-admin/*" element={<SuperAdmin />} />
+                <Route path="/superadmin/*" element={<SuperAdmin />} />
                 <Route path="/mentor/*" element={<SubAdmin />} />
                 <Route path="/dashboard" element={<Dashboard user="User" />} />
                 <Route path="*" element={<Navigate to="/" replace />} />

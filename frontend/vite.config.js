@@ -8,7 +8,7 @@ export default defineConfig({
   envDir: '../', // Load .env from the root folder
   publicDir: '../static',
   build: {
-    outDir: '../../dist',
+    outDir: '../dist',
     emptyOutDir: true,
   },
   server: {

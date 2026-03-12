@@ -1,12 +1,10 @@
 //Super Admin Dashboard 
 import React, { useState, useEffect, useRef } from "react";
-import { useNavigate, useLocation, useSearchParams } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { API_BASE_URL } from "./config";
 import logo from "../static/NNlogo.jpeg";
-
-// ────────────────────────────────────────────────
-//           DATE / TIME FORMATTING HELPERS
-// ────────────────────────────────────────────────
+ 
+//           DATE / TIME FORMATTING HELPERS 
 
 function formatIndianDateTime(value) {
   if (!value || value === 'NULL' || value.trim() === '') return "—";
@@ -64,26 +62,82 @@ function formatIndianDateOnly(value) {
   }
 }
 
+const DEFAULT_CURRENT_USER = { name: "Super Admin", username: "Super Admin", domain: "xyz" };
+const DASHBOARD_REFRESH_MS = 30000;
+
+function getStoredCurrentUser() {
+  try {
+    const raw = localStorage.getItem("currentUser");
+    if (!raw) return DEFAULT_CURRENT_USER;
+
+    const parsed = JSON.parse(raw);
+    return {
+      ...DEFAULT_CURRENT_USER,
+      username: parsed.username || DEFAULT_CURRENT_USER.username,
+      name: parsed.username || parsed.name || DEFAULT_CURRENT_USER.name,
+      role: parsed.role || "",
+      domain: parsed.domain || DEFAULT_CURRENT_USER.domain,
+      designation: parsed.designation || "",
+    };
+  } catch (error) {
+    console.warn("Failed to parse currentUser from storage:", error);
+    return DEFAULT_CURRENT_USER;
+  }
+}
+
+function fetchWithSession(url, options = {}) {
+  return fetch(url, {
+    credentials: "include",
+    ...options,
+    headers: {
+      ...(options.headers || {}),
+    },
+  });
+}
+
+// Session verification on app mount
+const verifySession = async () => {
+  try {
+    const response = await fetchWithSession(`${API_BASE_URL}/api/session`);
+    const data = await response.json();
+    
+    if (!response.ok || !data.authenticated) {
+      // Session not valid, redirect to login
+      console.warn("Session invalid, redirecting to login...", data);
+      localStorage.removeItem("currentUser");
+      localStorage.removeItem("token");
+      window.location.href = "/";
+      return false;
+    }
+    console.log("✅ Session verified:", data.user);
+    return true;
+  } catch (err) {
+    console.error("Session verification failed:", err);
+    // Don't redirect on network error - allow access
+    // The actual API calls will handle auth errors
+    return true;
+  }
+};
+
 const SuperAdmin = () => {
   const location = useLocation();
   const [activeView, setActiveView] = useState("dashboard");
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [reportsMenuOpen, setReportsMenuOpen] = useState(false);
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
   const [dailyReports, setDailyReports] = useState([]);
   const [weeklyReports, setWeeklyReports] = useState([]);
   const [reportsLoading, setReportsLoading] = useState(false);
   const [reportsError, setReportsError] = useState(null);
   const [showReportForm, setShowReportForm] = useState(null); // 'daily' or 'weekly'
-  const [currentUser, setCurrentUser] = useState({ name: 'Super Admin', username: 'Super Admin', domain: 'xyz' });
+  const [currentUser] = useState(getStoredCurrentUser);
   const [editingData, setEditingData] = useState(null);
   const [monthlyReportData, setMonthlyReportData] = useState([]);
   const [showMonthlyReportTable, setShowMonthlyReportTable] = useState(false);
   const [logsData, setLogsData] = useState([]);
   const pollingIntervalRef = useRef(null);
   const [selectedReport, setSelectedReport] = useState(null);
-
+  const reportMode = new URLSearchParams(location.search).get("mode");
 
   // Report form state
   const [reportFormData, setReportFormData] = useState({
@@ -120,7 +174,7 @@ const SuperAdmin = () => {
     if (!currentUser?.username) return;
 
     // Call logout API to record logout time
-    const response = await fetch(`${API_BASE_URL}/api/logout`, {
+    const response = await fetchWithSession(`${API_BASE_URL}/api/logout`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -142,7 +196,7 @@ const SuperAdmin = () => {
 };
 
   const handleSetActiveView = (view) => {
-    navigate(`/super-admin/${view === 'dashboard' ? '' : view}`);
+    navigate(`/superadmin/${view === 'dashboard' ? '' : view}`);
   };
 
   const [dashboardStats, setDashboardStats] = useState({
@@ -161,7 +215,7 @@ const SuperAdmin = () => {
     try {
       if (!currentUser?.username) return;
 
-      const response = await fetch(`${API_BASE_URL}/api/logs`);
+      const response = await fetchWithSession(`${API_BASE_URL}/api/logs`);
       if (response.ok) {
         const allLogs = await response.json() || [];
         
@@ -202,19 +256,33 @@ const SuperAdmin = () => {
 
   const fetchDashboardData = () => {
     Promise.all([
-      fetch(`${API_BASE_URL}/api/admins`).then((res) => res.json()),
-      fetch(`${API_BASE_URL}/api/users`).then((res) => res.json()),
-      fetch(`${API_BASE_URL}/api/logs`).then((res) => res.json()),
+      fetchWithSession(`${API_BASE_URL}/api/admins`).then((res) => {
+        if (!res.ok) return [];
+        return res.json();
+      }),
+      fetchWithSession(`${API_BASE_URL}/api/users`).then((res) => {
+        if (!res.ok) return [];
+        return res.json();
+      }),
+      fetchWithSession(`${API_BASE_URL}/api/logs`).then((res) => {
+        if (!res.ok) return [];
+        return res.json();
+      }),
     ])
       .then(([adminsData, usersData, logsDataResponse]) => {
+        // Ensure data is always an array
+        const adminsArray = Array.isArray(adminsData) ? adminsData : [];
+        const usersArray = Array.isArray(usersData) ? usersData : [];
+        const logsArray = Array.isArray(logsDataResponse) ? logsDataResponse : [];
+        
         const storedUser = JSON.parse(localStorage.getItem('currentUser'));
         const adminDomain = currentUser.domain || storedUser?.domain;
         const adminRole = currentUser.role || storedUser?.role;
         const isAdminName = currentUser.username || currentUser.name || storedUser?.username;
         const isSpecialDomain = !adminDomain || adminDomain === 'xyz' || adminDomain === 'Admin' || adminDomain === 'Super Admin' || adminDomain === 'Management' || (adminRole && adminRole.toLowerCase().includes('super'));
-        const filteredAdmins = isSpecialDomain ? adminsData : adminsData.filter(a => (a.domain || a.Domain) === adminDomain);
-        const filteredUsers = isSpecialDomain ? usersData : usersData.filter(u => (u.domain || u.Domain) === adminDomain);
-        const filteredLogs = isSpecialDomain ? (logsDataResponse || []) : (logsDataResponse || []).filter(l => l.domain === adminDomain);
+        const filteredAdmins = isSpecialDomain ? adminsArray : adminsArray.filter(a => (a.domain || a.Domain) === adminDomain);
+        const filteredUsers = isSpecialDomain ? usersArray : usersArray.filter(u => (u.domain || u.Domain) === adminDomain);
+        const filteredLogs = isSpecialDomain ? logsArray : logsArray.filter(l => l.domain === adminDomain);
 
         setMonthlyReportData(filteredUsers);
         setLogsData(filteredLogs);
@@ -243,6 +311,9 @@ const SuperAdmin = () => {
 
     if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
 
+    // Verify session on mount
+    verifySession();
+
     if (path.endsWith("/create-admin")) view = "create-admin";
     else if (path.endsWith("/view-admins")) view = "view-admins";
     else if (path.endsWith("/create-user")) view = "create-user";
@@ -264,36 +335,23 @@ const SuperAdmin = () => {
       }));
       fetchDashboardData();
       fetchPreviousLogoutTime();
-      pollingIntervalRef.current = setInterval(fetchDashboardData, 3000);
+      pollingIntervalRef.current = setInterval(() => {
+        if (document.visibilityState === "visible") {
+          fetchDashboardData();
+        }
+      }, DASHBOARD_REFRESH_MS);
     }
 
     if (view === "daily-reports") {
       fetchReports("daily");
-      const mode = searchParams.get("mode");
-      setShowReportForm(mode === "list" ? null : "daily");
+      setShowReportForm(reportMode === "list" ? null : "daily");
     } else if (view === "weekly-reports") {
       fetchReports("weekly");
-      const mode = searchParams.get("mode");
-      setShowReportForm(mode === "list" ? null : "weekly");
+      setShowReportForm(reportMode === "list" ? null : "weekly");
     }
 
     return () => { if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current); };
-  }, [location.pathname, searchParams]);
-
-  useEffect(() => {
-    const storedUser = localStorage.getItem('currentUser');
-    if (storedUser) {
-      const parsedUser = JSON.parse(storedUser);
-      setCurrentUser(prev => ({
-        ...prev,
-        username: parsedUser.username,
-        name: parsedUser.username,
-        role: parsedUser.role || '',
-        domain: parsedUser.domain || prev.domain,
-        designation: parsedUser.designation || ''
-      }));
-    }
-  }, []);
+  }, [location.pathname, reportMode]);
 
   // Handle window close/tab close
   useEffect(() => {
@@ -312,7 +370,7 @@ const SuperAdmin = () => {
 
         // Call logout API FIRST
         try {
-          await fetch(`${API_BASE_URL}/api/logout`, {
+          await fetchWithSession(`${API_BASE_URL}/api/logout`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -343,7 +401,7 @@ const SuperAdmin = () => {
       setReportsError(null);
       // Use separate endpoints for daily and weekly reports
       const endpoint = reportType === "daily" ? "daily-reports" : "weekly-reports";
-      const response = await fetch(`${API_BASE_URL}/api/${endpoint}`);
+      const response = await fetchWithSession(`${API_BASE_URL}/api/${endpoint}`);
 
       if (!response.ok) {
         throw new Error(`Failed to fetch ${reportType} reports`);
@@ -401,7 +459,7 @@ const SuperAdmin = () => {
 
       // Use separate endpoint based on report type
       const endpoint = showReportForm === "daily" ? "daily-reports" : "weekly-reports";
-      const response = await fetch(`${API_BASE_URL}/api/${endpoint}`, {
+      const response = await fetchWithSession(`${API_BASE_URL}/api/${endpoint}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -449,9 +507,9 @@ const SuperAdmin = () => {
 
       setShowReportForm(null);
       if (showReportForm === "daily") {
-        navigate("/super-admin/daily-reports?mode=list");
+        navigate("/superadmin/daily-reports?mode=list");
       } else if (showReportForm === "weekly") {
-        navigate("/super-admin/weekly-reports?mode=list");
+        navigate("/superadmin/weekly-reports?mode=list");
       }
       alert("Report created successfully!");
     } catch (error) {
@@ -468,7 +526,7 @@ const SuperAdmin = () => {
       setReportsLoading(true);
       // Use separate endpoint based on report type
       const endpoint = reportType === "daily" ? "daily-reports" : "weekly-reports";
-      const response = await fetch(`${API_BASE_URL}/api/${endpoint}/${reportId}`, {
+      const response = await fetchWithSession(`${API_BASE_URL}/api/${endpoint}/${reportId}`, {
         method: "DELETE",
       });
 
@@ -952,13 +1010,13 @@ const SuperAdmin = () => {
                 <FolderCard
                   title="Daily Reports"
                   icon={<FileTextIcon size={24} className="text-yellow-600" />}
-                  onClick={() => navigate("/super-admin/daily-reports?mode=list")}
+                  onClick={() => navigate("/superadmin/daily-reports?mode=list")}
                 />
                 <FolderCard
                   title="Weekly Reports"
                   icon={<FileTextIcon size={24} className="text-blue-600" />}
                   color="blue"
-                  onClick={() => navigate("/super-admin/weekly-reports?mode=list")}
+                  onClick={() => navigate("/superadmin/weekly-reports?mode=list")}
                 />
 
               </div>
@@ -1001,8 +1059,8 @@ const SuperAdmin = () => {
               loading={reportsLoading}
               error={reportsError}
               showForm={showReportForm === "daily"}
-              onShowForm={() => navigate("/super-admin/daily-reports?mode=form")}
-              onHideForm={() => navigate("/super-admin/daily-reports?mode=list")}
+              onShowForm={() => navigate("/superadmin/daily-reports?mode=form")}
+              onHideForm={() => navigate("/superadmin/daily-reports?mode=list")}
               formData={reportFormData}
               onFormChange={setReportFormData}
               onFormSubmit={handleReportSubmit}
@@ -1019,8 +1077,8 @@ const SuperAdmin = () => {
               loading={reportsLoading}
               error={reportsError}
               showForm={showReportForm === "weekly"}
-              onShowForm={() => navigate("/super-admin/weekly-reports?mode=form")}
-              onHideForm={() => navigate("/super-admin/weekly-reports?mode=list")}
+              onShowForm={() => navigate("/superadmin/weekly-reports?mode=form")}
+              onHideForm={() => navigate("/superadmin/weekly-reports?mode=list")}
               formData={reportFormData}
               onFormChange={setReportFormData}
               onFormSubmit={handleReportSubmit}
@@ -1165,7 +1223,7 @@ const CreateAdminForm = ({ onViewList, initialData }) => {
       const url = initialData
         ? `${API_BASE_URL}/api/admins/${initialData.id}`
         : `${API_BASE_URL}/api/admins`;
-      const response = await fetch(url, {
+      const response = await fetchWithSession(url, {
         method: initialData ? "PUT" : "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1391,7 +1449,7 @@ const CreateUserForm = ({ onViewList, initialData }) => {
       const url = initialData
         ? `${API_BASE_URL}/api/users/${initialData.id}`
         : `${API_BASE_URL}/api/users`;
-      const response = await fetch(url, {
+      const response = await fetchWithSession(url, {
         method: initialData ? "PUT" : "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1550,12 +1608,11 @@ const AdminList = ({ onCreateNew, onEdit, currentUser }) => {
 
   useEffect(() => {
     fetchAdmins();
-    const interval = setInterval(fetchAdmins, 3000);
-    return () => clearInterval(interval);
+    // Removed redundant setInterval polling - main dashboard already handles data refresh
   }, []);
 
   const fetchAdmins = () => {
-    fetch(`${API_BASE_URL}/api/admins`)
+    fetchWithSession(`${API_BASE_URL}/api/admins`)
       .then((res) => res.json())
       .then((data) => {
         const adminDomain = currentUser?.domain;
@@ -1578,7 +1635,7 @@ const AdminList = ({ onCreateNew, onEdit, currentUser }) => {
     }
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/admins/${userId}`, {
+      const response = await fetchWithSession(`${API_BASE_URL}/api/admins/${userId}`, {
         method: "DELETE",
       });
 
@@ -1669,12 +1726,11 @@ const UserList = ({ onCreateNew, onEdit, currentUser }) => {
 
   useEffect(() => {
     fetchUsers();
-    const interval = setInterval(fetchUsers, 3000);
-    return () => clearInterval(interval);
+    // Removed redundant setInterval polling - main dashboard already handles data refresh
   }, []);
 
   const fetchUsers = () => {
-    fetch(`${API_BASE_URL}/api/users?role=User`)
+    fetchWithSession(`${API_BASE_URL}/api/users?role=User`)
       .then((res) => res.json())
       .then((data) => {
         const adminDomain = currentUser?.domain;
@@ -1697,7 +1753,7 @@ const UserList = ({ onCreateNew, onEdit, currentUser }) => {
     }
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/users/${userId}?role=User`, {
+      const response = await fetchWithSession(`${API_BASE_URL}/api/users/${userId}?role=User`, {
         method: "DELETE",
       });
 

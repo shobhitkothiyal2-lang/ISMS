@@ -1,5 +1,8 @@
 from models import db
 from datetime import datetime
+import pytz
+
+IST = pytz.timezone("Asia/Kolkata")
 
 
 class Activity(db.Model):
@@ -14,7 +17,11 @@ class Activity(db.Model):
     screenshot_path = db.Column(db.String(255), nullable=True)
     app_url = db.Column(db.String(255), nullable=True)
     activity_metadata = db.Column("metadata", db.Text, nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    created_at = db.Column(
+        db.DateTime,
+        default=lambda: datetime.now(IST)
+    )
 
     def to_dict(self):
         return {
