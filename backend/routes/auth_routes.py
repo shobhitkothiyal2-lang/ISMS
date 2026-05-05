@@ -1,7 +1,7 @@
-import datetime
-from flask import Blueprint, request, jsonify, session, current_app
+from flask import Blueprint, request, jsonify, session
 from models import db, Admin, User, Log
 from sqlalchemy import or_
+from utils.datetime_utils import now_ist_naive
 
 auth_bp = Blueprint('auth_bp', __name__)
 
@@ -9,15 +9,8 @@ auth_bp = Blueprint('auth_bp', __name__)
 def login():
     """
     Handles login for ALL users — checks Admin table first, then User table.
-    Includes rate limiting to prevent brute-force.
+    Default app-wide rate limits are enforced by Flask-Limiter.
     """
-    # Apply rate limiting if limiter is available
-    if hasattr(current_app, 'limiter'):
-        @current_app.limiter.limit("5 per minute")
-        def limited_login():
-            return True
-        # Note: In a real production app, you'd use the decorator directly on the route.
-        # Here we are using current_app.limiter which is initialized in create_app.
 
     data = request.get_json()
     if not data:
@@ -44,7 +37,7 @@ def login():
         try:
             user.status = "Online"
             new_log = Log(
-                login_time=datetime.datetime.now().isoformat(),
+                login_time=now_ist_naive(),
                 username=user.username,
                 email=user.email,
                 domain=getattr(user, 'domain', 'N/A'),
@@ -56,10 +49,13 @@ def login():
             db.session.add(new_log)
             db.session.commit()
 
-            # Set session for auth_middleware
+            # Reset and re-issue the authenticated session cookie explicitly.
+            session.clear()
+            session.permanent = True
             session["user_id"] = user.id
             session["username"] = user.username
             session["role"] = user.role
+            session.modified = True
 
             return jsonify({
                 "success": True,
@@ -117,7 +113,7 @@ def logout():
                                     .first()
                 
                 if last_log:
-                    last_log.logout_time = datetime.datetime.now().isoformat()
+                    last_log.logout_time = now_ist_naive()
                     last_log.action = "User Session Completed"
                     db.session.commit()
 

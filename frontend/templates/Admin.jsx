@@ -2,7 +2,87 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { API_BASE_URL } from './config';
+import { formatIndianDate, formatIndianDateTime, formatIndianTime, getIndianDateTimeMs, getLatestLoginTime, getLatestLogoutTime } from './dateTime';
 import logo from '../static/NNlogo.jpeg';
+
+const isEndUserRole = (role) => String(role || '').trim().toLowerCase() === 'user';
+const formatIdleTime = (idleTimeInSeconds) => {
+    const totalSeconds = Number(idleTimeInSeconds);
+
+    if (!Number.isFinite(totalSeconds) || totalSeconds <= 0) {
+        return '—';
+    }
+
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+
+    if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
+    if (minutes > 0) return `${minutes}m ${seconds}s`;
+    return `${seconds}s`;
+};
+
+const getLogPrimaryDateValue = (log) => (log ? (log.login_time || log.logout_time || log.timestamp || null) : null);
+const getLogDateKey = (log) => {
+    const value = getLogPrimaryDateValue(log);
+    return value ? formatIndianDate(value) : '';
+};
+const getActivityDateKey = (activity) => {
+    const value = activity?.created_at || activity?.login_time || activity?.logout_time || null;
+    return value ? formatIndianDate(value) : '';
+};
+const mergeLogsWithActivityIdle = (logs, activities) => {
+    const idleRecords = (activities || [])
+        .filter((activity) => {
+            const idleSeconds = Number(activity?.idle_time) || 0;
+            if (idleSeconds <= 0) return false;
+
+            const action = String(activity?.action || '').trim().toLowerCase();
+            return action === 'idle' || action === 'session' || action === 'login' || action === 'logout';
+        })
+        .map((activity) => ({
+            username: String(activity?.username || '').trim().toLowerCase(),
+            dateKey: getActivityDateKey(activity),
+            idleSeconds: Number(activity.idle_time) || 0,
+            createdAtMs: getIndianDateTimeMs(activity.created_at || activity.login_time || activity.logout_time),
+        }));
+
+    return (logs || []).map((log) => {
+        const existingIdle = Number(log?.idle_time) || 0;
+        if (existingIdle > 0) return log;
+
+        const usernameKey = String(log?.username || '').trim().toLowerCase();
+        const logDateKey = getLogDateKey(log);
+        if (!usernameKey || !logDateKey) return log;
+
+        const loginMs = log.login_time ? getIndianDateTimeMs(log.login_time) : null;
+        const logoutMs = log.logout_time ? getIndianDateTimeMs(log.logout_time) : null;
+
+        let sessionIdle = 0;
+
+        for (const record of idleRecords) {
+            if (record.username !== usernameKey) continue;
+            if (record.dateKey !== logDateKey) continue;
+
+            if (loginMs && logoutMs) {
+                if (record.createdAtMs >= loginMs && record.createdAtMs <= logoutMs) {
+                    sessionIdle += record.idleSeconds;
+                }
+            } else if (loginMs) {
+                if (record.createdAtMs >= loginMs) {
+                    sessionIdle += record.idleSeconds;
+                }
+            } else {
+                sessionIdle += record.idleSeconds;
+            }
+        }
+
+        return {
+            ...log,
+            idle_time: sessionIdle,
+        };
+    });
+};
 
 const Admin = () => {
     const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -10,10 +90,17 @@ const Admin = () => {
     const [error, setError] = useState(null);
     const [reportsData, setReportsData] = useState([]);
     const [usersList, setUsersList] = useState([]);
+    const [mentorsList, setMentorsList] = useState([]);
     const [logsData, setLogsData] = useState([]);
     const [mentorPerformance, setMentorPerformance] = useState([]);
+    const [selectedReport, setSelectedReport] = useState(null);
+    const [selectedAuditProfile, setSelectedAuditProfile] = useState(null);
+    const [selectedUserProfile, setSelectedUserProfile] = useState(null);
+    const [editingData, setEditingData] = useState(null);
     const [currentView, setCurrentView] = useState('dashboard');
     const pollingIntervalRef = useRef(null);
+    const sessionExpiredRef = useRef(false);
+    const reportsRequestInFlightRef = useRef(false);
     const navigate = useNavigate();
     const location = useLocation();
     const [currentUser, setCurrentUser] = useState(() => {
@@ -31,6 +118,28 @@ const Admin = () => {
         return { name: 'Admin', username: 'Admin', domain: '', role: '', designation: '' };
     });
     const [dashboardStats, setDashboardStats] = useState({ dailyProductivity: '--', weeklyActivity: '--' });
+    const USERS_POLL_MS = 15000;
+    const LOGS_POLL_MS = 15000;
+    const MENTORS_POLL_MS = 30000;
+    const DASHBOARD_POLL_MS = 30000;
+
+    const clearPolling = () => {
+        if (pollingIntervalRef.current) {
+            clearInterval(pollingIntervalRef.current);
+            pollingIntervalRef.current = null;
+        }
+    };
+
+    const handleUnauthorized = () => {
+        clearPolling();
+        if (sessionExpiredRef.current) return;
+
+        sessionExpiredRef.current = true;
+        localStorage.removeItem("currentUser");
+        localStorage.removeItem("token");
+        setError("Session expired. Please log in again.");
+        navigate("/");
+    };
 
     const handleLogout = async () => {
         try {
@@ -98,13 +207,15 @@ const Admin = () => {
     };
 
     // Report folder handlers with SuperAdmin data fetching and real-time updates
-    const handleReportFolderClick = async (reportType) => {
-        try {
-            setIsLoading(true);
-            setError(null);
-            const endpoint = reportType.toLowerCase().includes('daily') ? 'daily-reports' : 'weekly-reports';
+    const fetchReports = async (reportType, { showLoader = false } = {}) => {
+        if (reportsRequestInFlightRef.current) return;
 
-            // Fetch reports from SuperAdmin API
+        try {
+            reportsRequestInFlightRef.current = true;
+            if (showLoader) setIsLoading(true);
+            setError(null);
+
+            const endpoint = reportType.toLowerCase().includes('daily') ? 'daily-reports' : 'weekly-reports';
             const response = await fetch(`${API_BASE_URL}/api/${endpoint}`, {
                 method: 'GET',
                 headers: {
@@ -113,42 +224,29 @@ const Admin = () => {
                 credentials: 'include'
             });
 
+            if (response.status === 401) {
+                handleUnauthorized();
+                return;
+            }
+
             if (!response.ok) {
                 throw new Error(`Failed to fetch ${reportType} reports`);
             }
 
             const data = await response.json();
-            const mentorDomain = currentUser.domain || JSON.parse(localStorage.getItem('currentUser'))?.domain;
-            const filteredReports = mentorDomain ? data.filter(r => r.domain === mentorDomain) : data;
-            setReportsData(filteredReports);
-
-            // Set up real-time polling - refresh every 3 seconds
-            pollingIntervalRef.current = setInterval(async () => {
-                try {
-                    const refreshResponse = await fetch(`${API_BASE_URL}/api/${endpoint}`, {
-                        method: 'GET',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        credentials: 'include'
-                    });
-
-                    if (refreshResponse.ok) {
-                        const updatedData = await refreshResponse.json();
-                        const filteredRefresh = mentorDomain ? updatedData.filter(r => r.domain === mentorDomain) : updatedData;
-                        setReportsData(filteredRefresh);
-                    }
-                } catch (err) {
-                    console.warn(`Real-time polling error for ${reportType}:`, err);
-                }
-            }, 3000);
-
+            setReportsData(data);
         } catch (err) {
             console.error(`Error fetching reports:`, err);
             setError(`Failed to load reports: ${err.message}`);
         } finally {
-            setIsLoading(false);
+            reportsRequestInFlightRef.current = false;
+            if (showLoader) setIsLoading(false);
         }
+    };
+
+    const handleReportFolderClick = async (reportType) => {
+        setCurrentView(reportType.toLowerCase().includes('daily') ? 'daily-reports' : 'weekly-reports');
+        await fetchReports(reportType, { showLoader: true });
     };
 
     const fetchMentors = async () => {
@@ -183,24 +281,15 @@ const Admin = () => {
 
             if (uRes.ok && lRes.ok) {
                 const data = await uRes.json();
-                const allLogs = await lRes.json() || [];
+                const allLogs = (await lRes.json() || []).filter(log => isEndUserRole(log.role));
 
-                // No domain filtering — show all users
                 const usersWithActivity = data.map(user => {
-                    // Find all logs for this specific user, sorted by newest first
-                    const userLogs = allLogs.filter(log => log.username?.trim().toLowerCase() === user.username?.trim().toLowerCase())
-                        .slice().reverse();
-
-                    // Find the latest record that has a login time
-                    const lastLoginLog = userLogs.find(log => log.login_time || (log.action && (log.action.toLowerCase().includes('login') || log.action.toLowerCase().includes('log in') || log.action.toLowerCase().includes('logged in'))));
-
-                    // Find the latest record that has a logout time
-                    const lastLogoutLog = userLogs.find(log => log.logout_time || (log.action && (log.action.toLowerCase().includes('logout') || log.action.toLowerCase().includes('log out') || log.action.toLowerCase().includes('logged out') || log.action.toLowerCase().includes('session completed'))));
+                    const userLogs = allLogs.filter(log => log.username?.trim().toLowerCase() === user.username?.trim().toLowerCase());
 
                     return {
                         ...user,
-                        login_time: lastLoginLog ? (lastLoginLog.login_time || lastLoginLog.timestamp) : null,
-                        logout_time: lastLogoutLog ? (lastLogoutLog.logout_time || lastLogoutLog.timestamp) : null
+                        login_time: getLatestLoginTime(userLogs),
+                        logout_time: getLatestLogoutTime(userLogs)
                     };
                 });
 
@@ -220,50 +309,53 @@ const Admin = () => {
 
     const fetchLogs = async () => {
         try {
-            const response = await fetch(`${API_BASE_URL}/api/logs`, { credentials: "include" });
-            if (response.ok) {
-                const data = await response.json();
-                const mentorDomain = currentUser.domain;
-                const adminRole = currentUser.role;
-                const isSpecialDomain = !mentorDomain || mentorDomain === 'xyz' || mentorDomain === 'Admin' || mentorDomain === 'Super Admin' || mentorDomain === 'Management' || (adminRole && adminRole.toLowerCase().includes('super'));
-                const domainLogs = isSpecialDomain ? data : data.filter(log => (log.domain || log.Domain) === mentorDomain);
-                setLogsData(domainLogs);
+            const [logsResponse, activityResponse] = await Promise.all([
+                fetch(`${API_BASE_URL}/api/logs`, { credentials: "include" }),
+                fetch(`${API_BASE_URL}/api/activity`, { credentials: "include" })
+            ]);
+
+            if (logsResponse.ok) {
+                const data = await logsResponse.json();
+                const activities = activityResponse.ok ? await activityResponse.json() : [];
+                const userLogs = data.filter(log => isEndUserRole(log.role));
+                const mergedLogs = mergeLogsWithActivityIdle(userLogs, activities);
+                setLogsData(mergedLogs);
+                return mergedLogs;
             }
+
+            return [];
         } catch (err) {
             console.warn("Real-time polling error for logs:", err);
+            return [];
         }
     };
 
     const fetchDashboardData = async () => {
         try {
-            const [uRes, rRes, lRes, mRes, mentorsRes] = await Promise.all([
+            const [uRes, rRes, lRes, aRes, mRes, mentorsRes] = await Promise.all([
                 fetch(`${API_BASE_URL}/api/users`, { credentials: "include" }),
                 fetch(`${API_BASE_URL}/api/daily-reports`, { credentials: "include" }),
                 fetch(`${API_BASE_URL}/api/logs`, { credentials: "include" }),
+                fetch(`${API_BASE_URL}/api/activity`, { credentials: "include" }),
                 fetch(`${API_BASE_URL}/api/mentors/performance`, { credentials: "include" }),
                 fetch(`${API_BASE_URL}/api/admins?role=mentor`, { credentials: "include" })
             ]);
 
+            const users = uRes.ok ? await uRes.json() : [];
+            const reports = rRes.ok ? await rRes.json() : [];
+            const logs = lRes.ok ? (await lRes.json()).filter(log => isEndUserRole(log.role)) : [];
+            const activities = aRes.ok ? await aRes.json() : [];
+            const performance = mRes.ok ? await mRes.json() : [];
+            const mentorsData = mentorsRes?.ok ? await mentorsRes.json() : [];
+
             if (uRes.ok && lRes.ok) {
-                const users = await uRes.json();
-                const allLogs = await lRes.json() || [];
-
-                // No domain filtering — show all users across all domains
                 const usersWithActivity = users.map(user => {
-                    // Find all logs for this specific user, sorted by newest first
-                    const userLogs = allLogs.filter(log => log.username?.trim().toLowerCase() === user.username?.trim().toLowerCase())
-                        .slice().reverse();
-
-                    // Find the latest record that has a login time
-                    const lastLoginLog = userLogs.find(log => log.login_time || (log.action && (log.action.toLowerCase().includes('login') || log.action.toLowerCase().includes('log in') || log.action.toLowerCase().includes('logged in'))));
-
-                    // Find the latest record that has a logout time
-                    const lastLogoutLog = userLogs.find(log => log.logout_time || (log.action && (log.action.toLowerCase().includes('logout') || log.action.toLowerCase().includes('log out') || log.action.toLowerCase().includes('logged out') || log.action.toLowerCase().includes('session completed'))));
+                    const userLogs = logs.filter(log => log.username?.trim().toLowerCase() === user.username?.trim().toLowerCase());
 
                     return {
                         ...user,
-                        login_time: lastLoginLog ? (lastLoginLog.login_time || lastLoginLog.timestamp) : null,
-                        logout_time: lastLogoutLog ? (lastLogoutLog.logout_time || lastLogoutLog.timestamp) : null
+                        login_time: getLatestLoginTime(userLogs),
+                        logout_time: getLatestLogoutTime(userLogs)
                     };
                 });
 
@@ -276,19 +368,15 @@ const Admin = () => {
                 });
             }
             if (rRes.ok) {
-                const reports = await rRes.json();
                 setReportsData(reports); // All reports, no domain filter
             }
             if (lRes.ok) {
-                const logs = await lRes.json();
-                setLogsData(logs); // All logs, no domain filter
+                setLogsData(mergeLogsWithActivityIdle(logs, activities));
             }
             if (mRes.ok) {
-                const performance = await mRes.json();
                 setMentorPerformance(performance); // All mentor performance, no domain filter
             }
             if (mentorsRes && mentorsRes.ok) {
-                const mentorsData = await mentorsRes.json();
                 setMentorsList(mentorsData);
             }
         } catch (err) {
@@ -324,14 +412,69 @@ const Admin = () => {
         }
     };
 
+    const handleOpenUserProfile = async (user) => {
+        if (!user?.username) return;
+
+        let availableLogs = logsData;
+        if (availableLogs.length === 0) {
+            availableLogs = await fetchLogs();
+        }
+
+        const userLogs = availableLogs.filter(log =>
+            log.username?.trim().toLowerCase() === user.username?.trim().toLowerCase()
+        );
+        const recentLog = userLogs
+            .slice()
+            .sort((a, b) => getIndianDateTimeMs(getLogPrimaryDateValue(b)) - getIndianDateTimeMs(getLogPrimaryDateValue(a)))[0];
+        const dateKey = recentLog ? getLogDateKey(recentLog) : formatIndianDate(new Date());
+
+        setSelectedUserProfile({
+            username: user.username,
+            dateKey,
+            dateLabel: dateKey || 'N/A',
+            email: user.email || '—',
+            domain: user.domain || user.Domain || '—',
+            designation: user.designation || 'N/A',
+            role: user.role || 'User',
+            custom_id: user.custom_id,
+            id: user.id
+        });
+
+        setSelectedAuditProfile(null);
+        navigate('/admin/user-activity');
+    };
+
+    const handleCloseUserProfile = () => {
+        setSelectedUserProfile(null);
+        navigate('/admin/users');
+    };
+
+    const handleOpenAuditProfile = (log) => {
+        if (!log?.username) return;
+
+        setSelectedAuditProfile({
+            username: log.username,
+            dateKey: getLogDateKey(log),
+            dateLabel: getLogDateKey(log) || 'N/A',
+            email: log.email || '—',
+            domain: log.domain || '—',
+            designation: log.designation || 'N/A',
+            role: log.role || 'User'
+        });
+    };
+
+    const handleCloseAuditProfile = () => {
+        setSelectedAuditProfile(null);
+    };
+
     // URL-based view management
     useEffect(() => {
         const path = location.pathname;
-        if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
+        clearPolling();
 
         if (path.endsWith('/users')) {
             handleUsersNav();
-            pollingIntervalRef.current = setInterval(fetchUsers, 3000);
+            pollingIntervalRef.current = setInterval(fetchUsers, USERS_POLL_MS);
         } else if (path.endsWith('/create-user')) {
             setCurrentView('create-user');
         } else if (path.endsWith('/daily-reports')) {
@@ -351,18 +494,24 @@ const Admin = () => {
         } else if (path.endsWith('/mentors')) {
             setCurrentView('mentors');
             fetchMentors();
-            pollingIntervalRef.current = setInterval(fetchMentors, 5000);
+            pollingIntervalRef.current = setInterval(fetchMentors, MENTORS_POLL_MS);
+        } else if (path.endsWith('/user-activity')) {
+            setCurrentView('user-activity');
+            fetchLogs();
+            pollingIntervalRef.current = setInterval(fetchLogs, LOGS_POLL_MS);
         } else if (path.endsWith('/logs')) {
             setCurrentView('logs');
+            setSelectedAuditProfile(null);
             fetchLogs();
-            pollingIntervalRef.current = setInterval(fetchLogs, 3000);
+            pollingIntervalRef.current = setInterval(fetchLogs, LOGS_POLL_MS);
         } else {
+            setSelectedAuditProfile(null);
             handleDashboardNav();
-            pollingIntervalRef.current = setInterval(fetchDashboardData, 3000);
+            pollingIntervalRef.current = setInterval(fetchDashboardData, DASHBOARD_POLL_MS);
         }
 
         return () => {
-            if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
+            clearPolling();
         };
     }, [location.pathname]);
 
@@ -374,52 +523,47 @@ const Admin = () => {
                 ...prev,
                 name: parsedUser.username,
                 domain: parsedUser.domain || prev.domain,
+                role: parsedUser.role || prev.role,
                 designation: parsedUser.designation || ''
             }));
         }
     }, []);
 
-    // Handle window close/tab close
     useEffect(() => {
-        const handleBeforeUnload = async (e) => {
-          if (currentUser?.username) {
-            // Get current time
-            const now = new Date();
-            const formattedTime = now.toLocaleString("en-US", {
-              hour: "2-digit",
-              minute: "2-digit",
-              second: "2-digit",
-              month: "short",
-              day: "numeric",
-              year: "numeric"
-            });
+        if (selectedUserProfile?.username && logsData.length > 0) {
+            const userLogs = logsData
+                .filter((log) => log.username?.trim().toLowerCase() === selectedUserProfile.username?.trim().toLowerCase())
+                .sort((a, b) => getIndianDateTimeMs(getLogPrimaryDateValue(b)) - getIndianDateTimeMs(getLogPrimaryDateValue(a)));
 
-            // Call logout API
-            try {
-              await fetch(`${API_BASE_URL}/api/logout`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                credentials: "include",
-                body: JSON.stringify({
-                  username: currentUser.username
-                }),
-                keepalive: true
-              });
-
-              // Show logout modal with time
-              setLogoutTime(formattedTime);
-              setShowLogoutModal(true);
-            } catch (error) {
-              console.error("Logout failed on window close:", error);
+            if (userLogs.length > 0) {
+                const latestDateKey = getLogDateKey(userLogs[0]);
+                if (latestDateKey && latestDateKey !== selectedUserProfile.dateKey) {
+                    setSelectedUserProfile((prev) => prev ? ({
+                        ...prev,
+                        dateKey: latestDateKey,
+                        dateLabel: latestDateKey,
+                    }) : prev);
+                }
             }
-          }
-        };
+        }
 
-        window.addEventListener('beforeunload', handleBeforeUnload);
-        return () => {
-          window.removeEventListener('beforeunload', handleBeforeUnload);
-        };
-    }, [currentUser]);
+        if (selectedAuditProfile?.username && logsData.length > 0) {
+            const auditLogs = logsData
+                .filter((log) => log.username?.trim().toLowerCase() === selectedAuditProfile.username?.trim().toLowerCase())
+                .sort((a, b) => getIndianDateTimeMs(getLogPrimaryDateValue(b)) - getIndianDateTimeMs(getLogPrimaryDateValue(a)));
+
+            if (auditLogs.length > 0) {
+                const latestDateKey = getLogDateKey(auditLogs[0]);
+                if (latestDateKey && latestDateKey !== selectedAuditProfile.dateKey) {
+                    setSelectedAuditProfile((prev) => prev ? ({
+                        ...prev,
+                        dateKey: latestDateKey,
+                        dateLabel: latestDateKey,
+                    }) : prev);
+                }
+            }
+        }
+    }, [logsData, selectedUserProfile, selectedAuditProfile]);
 
     return (
         <div className="flex h-screen bg-[#F8F9FA] font-sans text-slate-800">
@@ -716,10 +860,11 @@ const Admin = () => {
                                                     </td>
                                                 </tr>
                                             ) : (
-                                                logsData.map((log) => (
+                                                logsData.slice(0, 5).map((log) => (
                                                     <LogStartRow
                                                         key={log.id}
                                                         {...log}
+                                                        onSelectUser={() => handleOpenAuditProfile(log)}
                                                     />
                                                 ))
                                             )}
@@ -804,6 +949,12 @@ const Admin = () => {
                                                              <button className="text-blue-600 hover:text-blue-800 font-medium text-xs px-3 py-1 bg-blue-50 rounded hover:bg-blue-100 transition-colors">
                                                                  Edit
                                                              </button>
+                                                             <button
+                                                                 onClick={() => handleOpenUserProfile(user)}
+                                                                 className="text-amber-600 hover:text-amber-800 font-medium text-xs px-3 py-1 bg-amber-50 rounded hover:bg-amber-100 transition-colors"
+                                                             >
+                                                                 Activity
+                                                             </button>
                                                              <button className="text-red-500 hover:text-red-700 font-medium text-xs px-3 py-1 bg-red-50 rounded hover:bg-red-100 transition-colors">
                                                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
                                                              </button>
@@ -815,6 +966,36 @@ const Admin = () => {
                                     </tbody>
                                 </table>
                             </div>
+                        </div>
+                        // User Activity View
+                    ) : currentView === 'user-activity' ? (
+                        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                            <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+                                <div>
+                                    <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                                        <button onClick={handleCloseUserProfile} className="p-1 hover:bg-slate-200 rounded-full transition-colors">
+                                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
+                                        </button>
+                                        User Activity Profile
+                                    </h2>
+                                    <p className="text-sm text-slate-500 mt-1">
+                                        {selectedUserProfile
+                                            ? `Daily activity summary for ${selectedUserProfile.username} on ${selectedUserProfile.dateLabel}`
+                                            : 'Select a user from System Users to view activity details.'}
+                                    </p>
+                                </div>
+                            </div>
+                            {selectedUserProfile ? (
+                                <UserAuditProfile
+                                    profile={selectedUserProfile}
+                                    logs={logsData}
+                                    onBack={handleCloseUserProfile}
+                                />
+                            ) : (
+                                <div className="p-12 text-center text-slate-400 italic">
+                                    No user selected.
+                                </div>
+                            )}
                         </div>
                         // Mentors Overview
                     ) : currentView === 'mentors' ? (
@@ -973,12 +1154,25 @@ const Admin = () => {
                             <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
                                 <div>
                                     <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-                                        <button onClick={() => setCurrentView('dashboard')} className="p-1 hover:bg-slate-200 rounded-full transition-colors">
+                                        <button
+                                            onClick={() => {
+                                                if (selectedAuditProfile) {
+                                                    handleCloseAuditProfile();
+                                                    return;
+                                                }
+                                                setCurrentView('dashboard');
+                                            }}
+                                            className="p-1 hover:bg-slate-200 rounded-full transition-colors"
+                                        >
                                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
                                         </button>
-                                        System Logs
+                                        {selectedAuditProfile ? 'User Activity Profile' : 'System Logs'}
                                     </h2>
-                                    <p className="text-sm text-slate-500 mt-1">Viewing all system activities and audit logs</p>
+                                    <p className="text-sm text-slate-500 mt-1">
+                                        {selectedAuditProfile
+                                            ? `Daily activity summary for ${selectedAuditProfile.username} on ${selectedAuditProfile.dateLabel}`
+                                            : 'Viewing all system activities and audit logs'}
+                                    </p>
                                 </div>
                                 <div className="flex gap-2">
                                     <span className="px-3 py-1 bg-slate-100 text-slate-600 rounded-full text-xs font-bold">
@@ -986,41 +1180,50 @@ const Admin = () => {
                                     </span>
                                 </div>
                             </div>
-                            <div className="overflow-x-auto">
-                                <table className="w-full text-sm text-left border-collapse">
-                                    <thead className="bg-slate-50 text-slate-500 uppercase text-xs font-semibold">
-                                        <tr>
-                                            <th className="px-6 py-4">ID</th>
-                                            <th className="px-6 py-4">Date</th>
-                                            <th className="px-6 py-4">Login Time</th>
-                                            <th className="px-6 py-4">Logout Time</th>
-                                            <th className="px-6 py-4">Username</th>
-                                            <th className="px-6 py-4">Designation</th>
-                                            <th className="px-6 py-4">Email</th>
-                                            <th className="px-6 py-4">Domain</th>
-                                            <th className="px-6 py-4">Role Type</th>
-                                            <th className="px-6 py-4">Status</th>
-                                            <th className="px-6 py-4">Action</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-slate-100">
-                                        {logsData.length === 0 ? (
+                            {selectedAuditProfile ? (
+                                <UserAuditProfile
+                                    profile={selectedAuditProfile}
+                                    logs={logsData}
+                                    onBack={handleCloseAuditProfile}
+                                />
+                            ) : (
+                                <div className="overflow-x-auto">
+                                    <table className="w-full text-sm text-left border-collapse">
+                                        <thead className="bg-slate-50 text-slate-500 uppercase text-xs font-semibold">
                                             <tr>
-                                                <td colSpan="10" className="p-12 text-center text-slate-400">
-                                                    No logs found.
-                                                </td>
+                                                <th className="px-6 py-4">ID</th>
+                                                <th className="px-6 py-4">Date</th>
+                                                <th className="px-6 py-4">Login Time</th>
+                                                <th className="px-6 py-4">Logout Time</th>
+                                                <th className="px-6 py-4">Username</th>
+                                                <th className="px-6 py-4">Designation</th>
+                                                <th className="px-6 py-4">Email</th>
+                                                <th className="px-6 py-4">Domain</th>
+                                                <th className="px-6 py-4">Role Type</th>
+                                                <th className="px-6 py-4">Status</th>
+                                                <th className="px-6 py-4">Action</th>
                                             </tr>
-                                        ) : (
-                                            logsData.map((log) => (
-                                                <LogStartRow
-                                                    key={log.id}
-                                                    {...log}
-                                                />
-                                            ))
-                                        )}
-                                    </tbody>
-                                </table>
-                            </div>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-100">
+                                            {logsData.length === 0 ? (
+                                                <tr>
+                                                    <td colSpan="10" className="p-12 text-center text-slate-400">
+                                                        No logs found.
+                                                    </td>
+                                                </tr>
+                                            ) : (
+                                                logsData.map((log) => (
+                                                    <LogStartRow
+                                                        key={log.id}
+                                                        {...log}
+                                                        onSelectUser={() => handleOpenAuditProfile(log)}
+                                                    />
+                                                ))
+                                            )}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )}
                         </div>
 
                     ) : currentView === 'create-user' ? (
@@ -1177,7 +1380,7 @@ const ReportFolder = ({ title, count, color = "text-orange-500" }) => (
 );
 
 // Log Row Component(used in Recent Log Activity table)
-const LogStartRow = ({ id, timestamp, login_time, logout_time, username, designation, email, domain, role, action }) => {
+const LogStartRow = ({ id, timestamp, login_time, logout_time, username, designation, email, domain, role, action, onSelectUser, idle_time }) => {
     const isLogin = action && (action.toLowerCase().includes('login') || action.toLowerCase().includes('log in') || action.toLowerCase().includes('logged in'));
     const isLogout = action && (action.toLowerCase().includes('logout') || action.toLowerCase().includes('log out') || action.toLowerCase().includes('logged out') || action.toLowerCase().includes('session completed'));
     
@@ -1188,9 +1391,9 @@ const LogStartRow = ({ id, timestamp, login_time, logout_time, username, designa
     const loginTimeValue = login_time || (!isLogout ? timestamp : null);
     const logoutTimeValue = logout_time || (isLogout ? timestamp : null);
 
-    const displayLoginTime = loginTimeValue ? new Date(loginTimeValue).toLocaleTimeString() : null;
-    const displayLogoutTime = logoutTimeValue ? new Date(logoutTimeValue).toLocaleTimeString() : null;
-    const displayDate = (loginTimeValue || logoutTimeValue) ? new Date(loginTimeValue || logoutTimeValue).toLocaleDateString('en-GB') : 'N/A';
+    const displayLoginTime = formatIndianTime(loginTimeValue);
+    const displayLogoutTime = formatIndianTime(logoutTimeValue);
+    const displayDate = formatIndianDate(loginTimeValue || logoutTimeValue);
 
     return (
       <tr className="bg-white hover:bg-slate-50 transition-colors border-b border-slate-100 last:border-0 group">
@@ -1218,7 +1421,16 @@ const LogStartRow = ({ id, timestamp, login_time, logout_time, username, designa
         </td>
         <td className="px-6 py-4">
             <div className="flex items-center gap-2">
-                <span className="font-bold text-slate-800 text-xs whitespace-nowrap">{username || 'N/A'}</span>
+                <button
+                    type="button"
+                    onClick={onSelectUser}
+                    disabled={!onSelectUser}
+                    className={`font-bold text-xs whitespace-nowrap transition-colors ${
+                        onSelectUser ? 'text-slate-800 hover:text-orange-600' : 'text-slate-800 cursor-default'
+                    }`}
+                >
+                    {username || 'N/A'}
+                </button>
             </div>
         </td>
         <td className="px-6 py-4 text-slate-600 text-xs font-medium">{designation || 'N/A'}</td>
@@ -1255,6 +1467,168 @@ const LogStartRow = ({ id, timestamp, login_time, logout_time, username, designa
             </span>
         </td>
       </tr>
+    );
+};
+
+const UserAuditProfile = ({ profile, logs, onBack }) => {
+    const userLogs = (logs || [])
+        .filter((log) =>
+            log.username?.trim().toLowerCase() === profile.username?.trim().toLowerCase()
+        )
+        .sort((a, b) => getIndianDateTimeMs(getLogPrimaryDateValue(a)) - getIndianDateTimeMs(getLogPrimaryDateValue(b)));
+    const availableDateKeys = Array.from(
+        new Set(
+            userLogs
+                .map((log) => getLogDateKey(log))
+                .filter((value) => value && value !== 'N/A')
+        )
+    ).sort((a, b) => {
+        const aLog = userLogs.find((log) => getLogDateKey(log) === a);
+        const bLog = userLogs.find((log) => getLogDateKey(log) === b);
+        return getIndianDateTimeMs(getLogPrimaryDateValue(bLog)) - getIndianDateTimeMs(getLogPrimaryDateValue(aLog));
+    });
+    const effectiveDateKey = availableDateKeys.includes(profile.dateKey)
+        ? profile.dateKey
+        : (availableDateKeys[0] || profile.dateKey);
+    const effectiveDateLabel = effectiveDateKey || profile.dateLabel || 'N/A';
+    const dailyLogs = userLogs
+        .filter((log) => getLogDateKey(log) === effectiveDateKey);
+
+    const uniqueDailyLogs = Array.from(
+        dailyLogs.reduce((map, log) => {
+            const sessionKey = [
+                String(log.username || '').trim().toLowerCase(),
+                log.login_time || '',
+                log.logout_time || '',
+                getLogDateKey(log) || '',
+            ].join('__');
+
+            const existing = map.get(sessionKey);
+            if (!existing) {
+                map.set(sessionKey, log);
+                return map;
+            }
+
+            map.set(sessionKey, {
+                ...existing,
+                idle_time: Math.max(Number(existing.idle_time) || 0, Number(log.idle_time) || 0),
+                logout_time: existing.logout_time || log.logout_time,
+                timestamp: existing.timestamp || log.timestamp,
+            });
+            return map;
+        }, new Map()).values()
+    );
+
+    const loginCandidates = uniqueDailyLogs
+        .map((log) => log.login_time)
+        .filter((value) => value && value !== 'NULL');
+    const logoutCandidates = uniqueDailyLogs
+        .map((log) => log.logout_time || ((log.action || '').toLowerCase().includes('logout') ? (log.timestamp || log.login_time) : null))
+        .filter((value) => value && value !== 'NULL');
+    const totalIdleSeconds = uniqueDailyLogs.reduce((sum, log) => sum + (Number(log.idle_time) || 0), 0);
+
+    const firstLogin = loginCandidates.length
+        ? loginCandidates.sort((a, b) => getIndianDateTimeMs(a) - getIndianDateTimeMs(b))[0]
+        : null;
+    const lastLogout = logoutCandidates.length
+        ? logoutCandidates.sort((a, b) => getIndianDateTimeMs(b) - getIndianDateTimeMs(a))[0]
+        : null;
+
+    return (
+        <div className="p-6 space-y-6">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                    <h3 className="text-2xl font-bold text-slate-800">{profile.username}</h3>
+                    <p className="text-sm text-slate-500">{profile.email}</p>
+                    <p className="text-sm text-slate-500 mt-1">{profile.domain} • {profile.designation}</p>
+                    <p className="text-sm text-slate-500">ID: {profile.custom_id || profile.id || '—'}</p>
+                </div>
+                <button
+                    type="button"
+                    onClick={onBack}
+                    className="px-4 py-2 border border-slate-200 rounded-lg text-sm font-semibold text-slate-600 hover:bg-slate-50"
+                >
+                    Back To Logs
+                </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+                <AuditSummaryCard title="User ID" value={profile.custom_id || profile.id || '—'} tone="slate" />
+                <AuditSummaryCard title="Date" value={effectiveDateLabel} tone="slate" />
+                <AuditSummaryCard title="First Login" value={firstLogin ? formatIndianDateTime(firstLogin) : '—'} tone="green" />
+                <AuditSummaryCard title="Last Logout" value={lastLogout ? formatIndianDateTime(lastLogout) : '—'} tone="red" />
+                <AuditSummaryCard title="Total Idle Time" value={formatIdleTime(totalIdleSeconds)} tone="amber" />
+            </div>
+
+            <div className="bg-slate-50 rounded-2xl border border-slate-200 overflow-hidden">
+                <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
+                    <h4 className="font-bold text-slate-800">Activity Timeline</h4>
+                    <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{uniqueDailyLogs.length} Records</span>
+                </div>
+                <div className="overflow-x-auto">
+                    <table className="w-full text-sm text-left border-collapse">
+                        <thead className="bg-white text-slate-500 uppercase text-xs font-semibold">
+                            <tr>
+                                <th className="px-6 py-4">Log ID</th>
+                                <th className="px-6 py-4">Login Time</th>
+                                <th className="px-6 py-4">Logout Time</th>
+                                <th className="px-6 py-4">Action</th>
+                                <th className="px-6 py-4">Idle Time</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-200 bg-white">
+                            {uniqueDailyLogs.length === 0 ? (
+                                <tr>
+                                    <td colSpan="5" className="px-6 py-12 text-center text-slate-400 italic">
+                                        No activity found for this user on {effectiveDateLabel}.
+                                    </td>
+                                </tr>
+                            ) : (
+                                uniqueDailyLogs.map((log) => (
+                                    <tr key={log.id} className="hover:bg-slate-50 transition-colors">
+                                        <td className="px-6 py-4 font-mono text-xs text-slate-400">#{log.id}</td>
+                                        <td className="px-6 py-4 text-xs font-semibold text-green-700">
+                                            {log.login_time ? formatIndianDateTime(log.login_time) : '—'}
+                                        </td>
+                                        <td className="px-6 py-4 text-xs font-semibold text-red-700">
+                                            {log.logout_time ? formatIndianDateTime(log.logout_time) : '—'}
+                                        </td>
+                                        <td className="px-6 py-4">
+                                            <span className="text-slate-700 text-xs font-semibold bg-slate-100 px-2 py-1 rounded border border-slate-200 whitespace-nowrap">
+                                                {log.action || '—'}
+                                            </span>
+                                        </td>
+                                        <td className="px-6 py-4">
+                                            <span className="text-slate-700 text-xs font-semibold bg-amber-50 px-2 py-1 rounded border border-amber-100 whitespace-nowrap">
+                                                {formatIdleTime(log.idle_time)}
+                                            </span>
+                                        </td>
+                                    </tr>
+                                ))
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+const AuditSummaryCard = ({ title, value, tone }) => {
+    const toneClass =
+        tone === 'green'
+            ? 'bg-green-50 border-green-100 text-green-700'
+            : tone === 'red'
+                ? 'bg-red-50 border-red-100 text-red-700'
+                : tone === 'amber'
+                    ? 'bg-amber-50 border-amber-100 text-amber-700'
+                    : 'bg-slate-50 border-slate-200 text-slate-700';
+
+    return (
+        <div className={`rounded-2xl border p-4 ${toneClass}`}>
+            <p className="text-xs font-bold uppercase tracking-wide opacity-80">{title}</p>
+            <p className="mt-2 text-sm font-bold break-words">{value}</p>
+        </div>
     );
 };
 
@@ -1361,7 +1735,11 @@ const CreateUserForm = ({ onViewList, initialData }) => {
                 headers: {
                     "Content-Type": "application/json",
                 },
-                body: JSON.stringify(formData),
+                credentials: "include",
+                body: JSON.stringify({
+                    ...formData,
+                    Domain: formData.domain,
+                }),
             });
 
             if (response.ok) {

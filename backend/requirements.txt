@@ -3,6 +3,7 @@ flask-sqlalchemy
 flask-cors
 python-dotenv
 mysql-connector-python
+psycopg[binary]
 razorpay
 PyJWT
 Werkzeug

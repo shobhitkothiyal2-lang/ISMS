@@ -1,161 +1,65 @@
-# ISMS React Conversion
+# ISMS
 
-This project has been converted from Flask HTML templates to React components.
+ISMS is a React frontend with a Flask API backend. The repo is now structured to deploy cleanly on Render as:
 
-## 📁 File Structure
+- `isms-api`: Python web service
+- `isms-frontend`: Static site
+- `isms-db`: Render PostgreSQL database
 
-```
-isms/
-├── templates/
-│   ├── Admin.jsx          # Admin dashboard component
-│   ├── Login.jsx          # Login page component
-│   ├── SuperAdmin.jsx     # Super Admin dashboard component
-│   ├── SubAdmin.jsx       # Sub Admin (Mentor) dashboard component
-│   ├── Dashboard.jsx      # Generic dashboard component
-│   ├── App.jsx            # Main app with routing
-│   ├── index.jsx          # React entry point
-│   └── index.html         # HTML template
-├── package.json           # Dependencies
-└── vite.config.js         # Vite configuration
-```
+## Local development
 
-## 🚀 Getting Started
-
-### 1. Install Dependencies
+Backend:
 
 ```bash
-cd c:\Users\SHOBHIT\Downloads\isms
+cd backend
+pip install -r requirements.txt
+python create_db.py
+python app.py
+```
+
+Frontend:
+
+```bash
+cd frontend
 npm install
-```
-
-### 2. Run Development Server
-
-```bash
 npm run dev
 ```
 
-This will start the Vite development server at `http://localhost:3000`
+Frontend dev server runs on `http://localhost:3000` and expects the API at `http://localhost:5000` unless `VITE_API_BASE_URL` is set.
 
-### 3. Build for Production
+## Render deployment
 
-```bash
-npm run build
-```
+This repo includes [render.yaml](/c:/novaPRO/isms/ISMS/render.yaml) for Blueprint deploys.
 
-## 🛠️ Backend Integration (For Reviewer)
+### Backend behavior
 
-This project is prepared for backend integration. All API endpoints are centralized and easily configurable.
+- Uses `DATABASE_URL` from Render and normalizes Postgres URLs for SQLAlchemy.
+- Exposes `/healthz` for health checks.
+- Removes import-time database initialization so Gunicorn starts cleanly.
+- Runs schema creation and default superadmin seeding via `python create_db.py` in `preDeployCommand`.
+- Uses signed Flask cookies instead of filesystem-backed server sessions, which is safer for stateless hosting.
 
-### 1. Configure API URL
-Create or edit the `.env` file in the root directory and set the backend URL:
+### Required environment values
 
-```bash
-VITE_API_URL=http://your-backend-api-url:port
-```
+Render will generate or wire these automatically from `render.yaml`:
 
-### 2. API Endpoints
-The frontend expects the following endpoints from your backend:
-- `POST /api/login` - User authentication
-- `GET /api/reports` - Fetch reports (supports `?type=Daily` or `?type=Weekly`)
-- `POST /api/reports` - Submit new reports
-- `DELETE /api/reports/:id` - Delete a report
-- `GET /api/users` - Fetch user lists and statistics
-- `GET /api/logs` - System logs
-- `GET /api/mentors/performance` - Performance metrics
+- `DATABASE_URL`
+- `SECRET_KEY`
+- `JWT_SECRET_KEY`
+- `IS_PRODUCTION=true`
+- `SESSION_COOKIE_SECURE=true`
+- `SESSION_COOKIE_SAMESITE=None`
 
-## 📝 Components Overview
+You still need to set these values after the first Blueprint deploy:
 
-### Login.jsx
-- Handles user authentication
-- Form with username and password fields
-- Redirects to appropriate dashboard based on role
+- `ALLOWED_ORIGINS=https://<your-frontend>.onrender.com`
+- `VITE_API_BASE_URL=https://<your-api>.onrender.com`
 
-### Admin.jsx
-- Admin dashboard with sidebar navigation
-- Displays stats: Total Users, Daily Productivity, Weekly Activity
+## Default credentials
 
-### SuperAdmin.jsx
-- Super Admin dashboard
-- Shows Total Users, Total Admins, Productivity stats
+The deployment seed creates:
 
-### SubAdmin.jsx (Mentor)
-- Full-featured dashboard with modern UI
-- Top navigation bar with search
-- Sidebar navigation
-- Stats cards
-- System overview with live monitors
-- Monthly reports section
-- Interactive report tabs (Daily/Weekly/Monthly)
+- Username: `superadmin`
+- Password: value of `SUPERADMIN_DEFAULT_PASSWORD` if set, otherwise `ChangeMe@123!`
 
-### Dashboard.jsx
-- Generic dashboard component
-- Can be customized for different user types
-
-## 🔄 Conversion Changes
-
-### From HTML Templates to React:
-1. ✅ Converted all `.html` files to `.jsx` React components
-2. ✅ Added React Router for navigation
-3. ✅ Converted inline styles to CSS-in-JS where needed
-4. ✅ Added state management with React hooks
-5. ✅ Made components interactive (e.g., report tabs in SubAdmin)
-6. ✅ Set up Vite for fast development and building
-
-### Key Differences:
-- **Routing**: Now uses React Router instead of Flask routes
-- **State**: Form inputs and UI state managed with React hooks
-- **Styling**: CSS classes remain the same, styles can reference `style.css`
-- **Interactivity**: Components are now interactive with React events
-
-## 🔗 Integration with Flask (Optional)
-
-If you want to keep Flask as the backend API:
-
-1. Build the React app: `npm run build`
-2. Serve the built files from Flask
-3. Use Flask for API endpoints only
-4. Update API calls in React components to point to Flask endpoints
-
-## 📦 Dependencies
-
-- **React 18.2.0**: UI library
-- **React Router DOM 6.20.0**: Client-side routing
-- **Vite 5.0.8**: Build tool and dev server
-- **@vitejs/plugin-react**: Vite plugin for React
-
-## 🎨 Styling
-
-The components reference `style.css` for styling. Make sure to:
-1. Keep your existing `static/style.css` file
-2. Or move styles into component files
-3. Or use a CSS-in-JS solution like styled-components
-
-## 🔐 Authentication
-
-Currently, the Login component has a basic form submission. You'll need to:
-1. Set up API endpoints in Flask (or another backend)
-2. Update the fetch call in `Login.jsx` to point to your API
-3. Handle JWT tokens or session management
-4. Add protected route logic in `App.jsx`
-
-## 📱 Responsive Design
-
-The SubAdmin component includes responsive breakpoints:
-- Desktop: Full layout with sidebar
-- Tablet (< 1100px): Stacked content grid
-- Mobile (< 900px): Vertical sidebar layout
-
-## 🛠️ Next Steps
-
-1. ✅ Install dependencies
-2. ✅ Run the dev server
-3. 🔲 Set up backend API endpoints
-4. 🔲 Implement authentication logic
-5. 🔲 Add data fetching from backend
-6. 🔲 Customize styling as needed
-7. 🔲 Add more features and components
-
----
-
-**Note**: The old HTML files are still in the templates folder. You can keep them as backup or remove them once you're satisfied with the React version.
-# ISMS
+Set `SUPERADMIN_DEFAULT_PASSWORD` on Render before first production deploy if you do not want the fallback password to be used.

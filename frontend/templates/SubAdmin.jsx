@@ -2,6 +2,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { API_BASE_URL } from './config';
+import { formatIndianDate, formatIndianDateTime, formatIndianTime, getLatestLoginTime, getLatestLogoutTime } from './dateTime';
+
+const isEndUserRole = (role) => String(role || '').trim().toLowerCase() === 'user';
+const normalizeDomain = (value) => String(value || '').trim().toLowerCase();
+const USERS_POLL_MS = 15000;
+const DASHBOARD_POLL_MS = 15000;
+const REPORTS_POLL_MS = 15000;
 
 const SubAdmin = () => {
     const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -40,21 +47,56 @@ const SubAdmin = () => {
     });
 
     const pollingIntervalRef = useRef(null);
+    const usersRequestInFlightRef = useRef(false);
+    const dashboardRequestInFlightRef = useRef(false);
+    const reportsRequestInFlightRef = useRef(false);
     const navigate = useNavigate();
     const location = useLocation();
+
+    const clearPolling = () => {
+        if (pollingIntervalRef.current) {
+            clearInterval(pollingIntervalRef.current);
+            pollingIntervalRef.current = null;
+        }
+    };
+
+    const getCurrentDomain = () => {
+        const stored = localStorage.getItem('currentUser');
+        const storedDomain = stored ? JSON.parse(stored)?.domain : '';
+        return normalizeDomain(currentUser.domain || storedDomain);
+    };
+
+    const filterUsersByDomain = (users) => {
+        const mentorDomain = getCurrentDomain();
+        if (!mentorDomain) return [];
+        return (users || []).filter(user => normalizeDomain(user.domain || user.Domain) === mentorDomain);
+    };
+
+    const filterReportsByDomain = (reports) => {
+        const mentorDomain = getCurrentDomain();
+        if (!mentorDomain) return [];
+        return (reports || []).filter(report => normalizeDomain(report.domain || report.Domain) === mentorDomain);
+    };
+
+    const filterLogsByDomain = (logs) => {
+        const mentorDomain = getCurrentDomain();
+        if (!mentorDomain) return [];
+        return (logs || []).filter(log => normalizeDomain(log.domain || log.Domain) === mentorDomain);
+    };
 
 
     // Fetch daily reports for the "Daily Reports" view with backend integration, polling, and error handling
     const handleReportClick = async (reportType = 'daily') => {
+        if (reportsRequestInFlightRef.current) return;
+
         try {
+            reportsRequestInFlightRef.current = true;
             setIsLoading(true);
             setError(null);
             const endpoint = reportType === 'weekly' ? 'weekly-reports' : 'daily-reports';
             console.log(`Opening SubAdmin ${reportType} reports`);
 
-            if (pollingIntervalRef.current) {
-                clearInterval(pollingIntervalRef.current);
-            }
+            clearPolling();
 
             const response = await fetch(`${API_BASE_URL}/api/${endpoint}`, {
                 method: 'GET',
@@ -65,35 +107,42 @@ const SubAdmin = () => {
             if (!response.ok) throw new Error(`Failed to fetch reports`);
 
             const data = await response.json();
-            const mentorDomain = currentUser.domain;
-            const adminRole = currentUser.role;
-            const isSpecialDomain = !mentorDomain || mentorDomain === 'xyz' || mentorDomain === 'Admin' || mentorDomain === 'Super Admin' || mentorDomain === 'Management' || (adminRole && adminRole.toLowerCase().includes('super'));
-
-            const domainReports = isSpecialDomain ? data : data.filter(r => (r.domain || r.Domain) === mentorDomain);
+            const domainReports = filterReportsByDomain(data);
 
             setReportsData(domainReports);
             setCurrentView(reportType === 'weekly' ? 'weekly-reports' : 'daily-reports');
 
             pollingIntervalRef.current = setInterval(async () => {
+                if (reportsRequestInFlightRef.current) return;
+
                 try {
+                    reportsRequestInFlightRef.current = true;
                     const res = await fetch(`${API_BASE_URL}/api/${endpoint}`, { credentials: "include" });
                     if (res.ok) {
                         const updatedReports = await res.json();
-                        setReportsData(isSpecialDomain ? updatedReports : updatedReports.filter(r => (r.domain || r.Domain) === mentorDomain));
+                        setReportsData(filterReportsByDomain(updatedReports));
                     }
-                } catch (err) { console.warn(err); }
-            }, 3000);
+                } catch (err) {
+                    console.warn(err);
+                } finally {
+                    reportsRequestInFlightRef.current = false;
+                }
+            }, REPORTS_POLL_MS);
 
         } catch (err) {
             console.error(err);
             setError(err.message);
         } finally {
+            reportsRequestInFlightRef.current = false;
             setIsLoading(false);
         }
     };
     // Fetch users for the "Users" view with backend integration and error handling
     const fetchUsers = async () => {
+        if (usersRequestInFlightRef.current) return;
+
         try {
+            usersRequestInFlightRef.current = true;
             const [uRes, lRes] = await Promise.all([
                 fetch(`${API_BASE_URL}/api/users`, { credentials: "include" }),
                 fetch(`${API_BASE_URL}/api/logs`, { credentials: "include" })
@@ -101,24 +150,17 @@ const SubAdmin = () => {
 
             if (uRes.ok && lRes.ok) {
                 const data = await uRes.json();
-                const allLogs = await lRes.json() || [];
-                const mentorDomain = currentUser.domain;
-                const isSpecialDomain = !mentorDomain || mentorDomain === 'xyz' || mentorDomain === 'Admin' || mentorDomain === 'Super Admin' || mentorDomain === 'Management';
+                const allLogs = filterLogsByDomain((await lRes.json() || []).filter(log => isEndUserRole(log.role)));
 
-                // Filter to only same-domain users
-                const filteredUsers = isSpecialDomain ? data : data.filter(u => (u.domain || u.Domain || '').toLowerCase() === mentorDomain.toLowerCase());
+                const filteredUsers = filterUsersByDomain(data);
 
                 const usersWithActivity = filteredUsers.map(user => {
-                    const userLogs = allLogs.filter(log => log.username?.trim().toLowerCase() === user.username?.trim().toLowerCase())
-                        .slice().reverse();
-
-                    const lastLoginLog = userLogs.find(log => log.login_time || (log.action && (log.action.toLowerCase().includes('login') || log.action.toLowerCase().includes('log in') || log.action.toLowerCase().includes('logged in'))));
-                    const lastLogoutLog = userLogs.find(log => log.logout_time || (log.action && (log.action.toLowerCase().includes('logout') || log.action.toLowerCase().includes('log out') || log.action.toLowerCase().includes('logged out') || log.action.toLowerCase().includes('session completed'))));
+                    const userLogs = allLogs.filter(log => log.username?.trim().toLowerCase() === user.username?.trim().toLowerCase());
 
                     return {
                         ...user,
-                        login_time: lastLoginLog ? (lastLoginLog.login_time || lastLoginLog.timestamp) : null,
-                        logout_time: lastLogoutLog ? (lastLogoutLog.logout_time || lastLogoutLog.timestamp) : null
+                        login_time: getLatestLoginTime(userLogs),
+                        logout_time: getLatestLogoutTime(userLogs)
                     };
                 });
 
@@ -126,6 +168,8 @@ const SubAdmin = () => {
             }
         } catch (err) {
             console.warn("Real-time polling error for users:", err);
+        } finally {
+            usersRequestInFlightRef.current = false;
         }
     };
 
@@ -147,86 +191,63 @@ const SubAdmin = () => {
     };
 
     const fetchDashboardData = async () => {
+        if (dashboardRequestInFlightRef.current) return;
+
         try {
+            dashboardRequestInFlightRef.current = true;
             const [uRes, rRes, lRes] = await Promise.all([
                 fetch(`${API_BASE_URL}/api/users`, { credentials: "include" }),
                 fetch(`${API_BASE_URL}/api/daily-reports`, { credentials: "include" }),
                 fetch(`${API_BASE_URL}/api/logs`, { credentials: "include" })
             ]);
 
-            const mentorDomain = currentUser.domain;
-
             let usersWithActivity = [];
             if (uRes.ok && lRes.ok) {
                 const allUsers = await uRes.json() || [];
-                const allLogs = await lRes.json() || [];
+                const allLogs = filterLogsByDomain((await lRes.json() || []).filter(log => isEndUserRole(log.role)));
 
-                // Filter logs to show only those in the mentor's domain (case-insensitive)
                 setActivities(allLogs);
 
-                // Combine user data with their latest log activity
-                const isSpecialDomain = !mentorDomain || mentorDomain === 'xyz' || mentorDomain === 'Admin' || mentorDomain === 'Super Admin' || mentorDomain === 'Management';
-                const domainUsers = isSpecialDomain ? allUsers : allUsers.filter(u => {
-                    const uDomain = (u.domain || u.Domain || '').toLowerCase();
-                    const mDomain = (mentorDomain || '').toLowerCase();
-                    return uDomain === mDomain;
-                });
+                const domainUsers = filterUsersByDomain(allUsers);
 
                 usersWithActivity = domainUsers.map(user => {
-                    // Find all logs for this specific user, sorted by newest first
-                    const userLogs = allLogs.filter(log => log.username?.trim().toLowerCase() === user.username?.trim().toLowerCase())
-                        .slice().reverse();
-
-                    // Find the latest record that has a login time
-                    const lastLoginLog = userLogs.find(log => log.login_time || (log.action && (log.action.toLowerCase().includes('login') || log.action.toLowerCase().includes('log in') || log.action.toLowerCase().includes('logged in'))));
-
-                    // Find the latest record that has a logout time
-                    const lastLogoutLog = userLogs.find(log => log.logout_time || (log.action && (log.action.toLowerCase().includes('logout') || log.action.toLowerCase().includes('log out') || log.action.toLowerCase().includes('logged out') || log.action.toLowerCase().includes('session completed'))));
+                    const userLogs = allLogs.filter(log => log.username?.trim().toLowerCase() === user.username?.trim().toLowerCase());
 
                     return {
                         ...user,
-                        login_time: lastLoginLog ? (lastLoginLog.login_time || lastLoginLog.timestamp) : null,
-                        logout_time: lastLogoutLog ? (lastLogoutLog.logout_time || lastLogoutLog.timestamp) : null
+                        login_time: getLatestLoginTime(userLogs),
+                        logout_time: getLatestLogoutTime(userLogs)
                     };
                 });
 
                 setUsersList(usersWithActivity);
 
-                if (mentorDomain && mentorDomain !== 'Domain Mentor') {
-                    const activeCount = domainUsers.filter(u => u.status === 'Online').length;
-                    const activityPercentage = domainUsers.length > 0 ? Math.round((activeCount / domainUsers.length) * 100) : 0;
+                const activeCount = domainUsers.filter(u => u.status === 'Online').length;
+                const activityPercentage = domainUsers.length > 0 ? Math.round((activeCount / domainUsers.length) * 100) : 0;
 
-                    setDomainStats({
-                        newUsers: activeCount,
-                        activity: `${activityPercentage}%`
-                    });
-                }
+                setDomainStats({
+                    newUsers: activeCount,
+                    activity: `${activityPercentage}%`
+                });
             } else if (uRes.ok) {
                 const allUsers = await uRes.json() || [];
-                const isSpecialDomain = !mentorDomain || mentorDomain === 'xyz' || mentorDomain === 'Admin' || mentorDomain === 'Super Admin' || mentorDomain === 'Management';
-                const domainUsers = isSpecialDomain ? allUsers : allUsers.filter(u => {
-                    const uDomain = (u.domain || u.Domain || '').toLowerCase();
-                    const mDomain = (mentorDomain || '').toLowerCase();
-                    return uDomain === mDomain;
-                });
+                const domainUsers = filterUsersByDomain(allUsers);
                 setUsersList(domainUsers);
             }
 
             if (rRes.ok) {
                 const reports = await rRes.json() || [];
-                setReportsData(mentorDomain ? reports.filter(r => {
-                    const rDomain = (r.domain || r.Domain || '').toLowerCase();
-                    const mDomain = (mentorDomain || '').toLowerCase();
-                    return rDomain === mDomain;
-                }) : reports);
+                setReportsData(filterReportsByDomain(reports));
             }
         } catch (err) {
             console.warn("Dashboard polling error:", err);
+        } finally {
+            dashboardRequestInFlightRef.current = false;
         }
     };
     // Centralized navigation handler for sidebar items
     const handleSidebarNav = (label) => {
-        if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
+        clearPolling();
 
         if (label === 'Dashboard') {
             navigate('/mentor');
@@ -324,6 +345,29 @@ const SubAdmin = () => {
         } catch (err) { console.error("Failed to send notification:", err); }
     };
 
+    const handleDeleteTask = async (taskId, taskTitle) => {
+        const confirmed = window.confirm(`Delete task "${taskTitle}"?`);
+        if (!confirmed) return;
+
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/tasks/${taskId}`, {
+                method: 'DELETE',
+                credentials: 'include'
+            });
+
+            const result = await response.json().catch(() => ({}));
+
+            if (!response.ok) {
+                throw new Error(result.error || result.message || 'Failed to delete task');
+            }
+
+            setTasks(prevTasks => prevTasks.filter(task => task.id !== taskId));
+        } catch (err) {
+            console.error('Failed to delete task:', err);
+            setError(err.message || 'Failed to delete task.');
+        }
+    };
+
     useEffect(() => {
         const storedUser = localStorage.getItem('currentUser');
         if (storedUser) {
@@ -395,11 +439,11 @@ const SubAdmin = () => {
 
     useEffect(() => {
         const path = location.pathname;
-        if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
+        clearPolling();
 
         if (path.endsWith('/users')) {
             handleUsersClick();
-            pollingIntervalRef.current = setInterval(fetchUsers, 3000);
+            pollingIntervalRef.current = setInterval(fetchUsers, USERS_POLL_MS);
         } else if (path.endsWith('/daily-reports')) {
             handleReportClick('daily');
         } else if (path.endsWith('/weekly-reports')) {
@@ -428,10 +472,10 @@ const SubAdmin = () => {
         } else {
             setCurrentView('dashboard');
             fetchDashboardData();
-            pollingIntervalRef.current = setInterval(fetchDashboardData, 3000);
+            pollingIntervalRef.current = setInterval(fetchDashboardData, DASHBOARD_POLL_MS);
         }
 
-        return () => { if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current); };
+        return () => { clearPolling(); };
     }, [location.pathname]);
 
     return (
@@ -599,13 +643,13 @@ const SubAdmin = () => {
                                                         <h3 className="text-xl font-bold">Users List</h3>
                                                         <span className="text-2xl font-bold text-white/40 ml-4">{usersList.length || '0'}</span>
                                                     </div>
-                                                    <p className="text-blue-100 opacity-80 text-xs">Members in System</p>
+                                                    <p className="text-blue-100 opacity-80 text-xs">Members in Your Domain</p>
                                                 </div>
                                                 <div className="w-px h-10 bg-white/20"></div>
                                                 <div className="flex-1">
                                                     <div className="flex items-baseline justify-between mb-1">
                                                         <h3 className="text-xl font-bold">Domain Users</h3>
-                                                        <span className="text-2xl font-bold text-white/40 ml-4">{usersList.filter(u => u.domain === currentUser.domain).length || '0'}</span>
+                                                        <span className="text-2xl font-bold text-white/40 ml-4">{usersList.length || '0'}</span>
                                                     </div>
                                                     <p className="text-blue-100 opacity-80 text-xs line-clamp-1">Users in {currentUser.domain}</p>
                                                 </div>
@@ -701,8 +745,8 @@ const SubAdmin = () => {
                                                 return (
                                                     <ActivityRow
                                                         key={log.id}
-                                                        date={log.login_time ? new Date(log.login_time).toLocaleDateString('en-GB') : 'N/A'}
-                                                        time={log.login_time ? new Date(log.login_time).toLocaleTimeString() : 'N/A'}
+                                                        date={formatIndianDate(log.login_time)}
+                                                        time={formatIndianTime(log.login_time) || 'N/A'}
                                                         activity={`${log.username}: ${log.action}`}
                                                         status={status}
                                                     />
@@ -730,7 +774,7 @@ const SubAdmin = () => {
                                         </button>
                                         System Users
                                     </h2>
-                                    <p className="text-sm text-slate-500 mt-1 ml-8">Viewing all users from the central system</p>
+                                    <p className="text-sm text-slate-500 mt-1 ml-8">Viewing users from your domain only</p>
                                 </div>
                                 <div className="flex gap-2">
                                     <span className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-xs font-bold ring-1 ring-blue-200">
@@ -750,14 +794,14 @@ const SubAdmin = () => {
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-100">
-                                        {usersList.filter(u => u.domain === currentUser.domain).length === 0 ? (
+                                        {usersList.length === 0 ? (
                                             <tr>
                                                 <td colSpan="5" className="p-12 text-center text-slate-400">
                                                     No users found in your domain ({currentUser.domain}).
                                                 </td>
                                             </tr>
                                         ) : (
-                                            usersList.filter(u => u.domain === currentUser.domain).map((user) => (
+                                            usersList.map((user) => (
                                                 <tr key={user.id} className="hover:bg-slate-50 transition-colors">
                                                     <td className="px-6 py-4 font-mono text-xs text-slate-500">{user.custom_id || user.id}</td>
                                                     <td className="px-6 py-4">
@@ -1038,7 +1082,11 @@ const SubAdmin = () => {
                                                         </button>
 
                                                         {/* Delete Button */}
-                                                        <button className="text-slate-400 hover:text-red-500 transition-colors">
+                                                        <button
+                                                            onClick={() => handleDeleteTask(task.id, task.title)}
+                                                            className="text-slate-400 hover:text-red-500 transition-colors"
+                                                            title="Delete Task"
+                                                        >
                                                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
                                                         </button>
                                                     </td>
@@ -1172,27 +1220,14 @@ const SidebarItem = ({ icon, label, active, onClick, hasSubmenu, isOpen, childre
 };
 
 const UserRow = ({ id, name, email, domain, loginTime, logoutTime, status }) => {
-    const formatDateTime = (dateTimeString) => {
-        if (!dateTimeString) return 'N/A';
-        const date = new Date(dateTimeString);
-        return date.toLocaleString('en-US', {
-            month: 'short',
-            day: 'numeric',
-            year: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit'
-        });
-    };
-
     return (
         <tr className="hover:bg-slate-50 transition-colors">
             <td className="px-6 py-4 font-mono text-xs text-slate-500">{id}</td>
             <td className="px-6 py-4 font-semibold text-slate-700 whitespace-nowrap">{name}</td>
             <td className="px-6 py-4 text-slate-500">{email}</td>
             <td className="px-6 py-4 text-slate-500">{domain}</td>
-            <td className="px-6 py-4 text-slate-500 text-xs">{loginTime ? formatDateTime(loginTime) : 'N/A'}</td>
-            <td className="px-6 py-4 text-slate-500 text-xs">{logoutTime ? formatDateTime(logoutTime) : 'N/A'}</td>
+            <td className="px-6 py-4 text-slate-500 text-xs">{loginTime ? formatIndianDateTime(loginTime) : 'N/A'}</td>
+            <td className="px-6 py-4 text-slate-500 text-xs">{logoutTime ? formatIndianDateTime(logoutTime) : 'N/A'}</td>
             <td className="px-6 py-4 text-center">
                 <span className={`inline-block w-3 h-3 rounded-full ${status === 'online' ? 'bg-green-500 shadow-sm shadow-green-300' : 'bg-slate-300'}`}></span>
             </td>
